@@ -1,0 +1,199 @@
+import AppKit
+import Combine
+import SwiftUI
+
+@MainActor
+public final class NotchWindowController {
+    private var panel: NotchPanel?
+    private let coordinator: NotchStateCoordinator
+    private let geometryMonitor: ScreenGeometryMonitor
+    private let defaultExpandedContent: () -> AnyView
+    private var cancellables = Set<AnyCancellable>()
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var hoverPollTimer: Timer?
+    private var isCursorInsideNotch: Bool = false
+
+    public init(
+        coordinator: NotchStateCoordinator,
+        geometryMonitor: ScreenGeometryMonitor,
+        defaultExpandedContent: @escaping () -> AnyView
+    ) {
+        self.coordinator = coordinator
+        self.geometryMonitor = geometryMonitor
+        self.defaultExpandedContent = defaultExpandedContent
+    }
+
+    public func show() {
+        let initialGeo = geometryMonitor.activeGeometry
+        let panel = NotchPanel(contentRect: initialGeo.canvasWindowFrame)
+
+        let canvasView = NotchCanvasView(
+            coordinator: coordinator,
+            geometryMonitor: geometryMonitor,
+            defaultExpandedContent: defaultExpandedContent
+        )
+
+        let hostingView = NotchHitTestHostingView(rootView: canvasView)
+        hostingView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: NotchGeometry.canvasWidth,
+            height: NotchGeometry.canvasHeight
+        )
+
+        hostingView.activeHitRectProvider = { [weak self] in
+            guard let self else {
+                return .zero
+            }
+            // Only intercept mouse clicks inside the window when the expanded card is open
+            // or compact wings are visible. When resting/closed, return .zero so 100% of clicks pass through.
+            guard self.coordinator.posture == .expandedCard || self.coordinator.posture == .compactWings else {
+                return .zero
+            }
+            let geo = self.geometryMonitor.activeGeometry
+            let layout = self.coordinator.targetLayout(
+                for: geo.notchFrame.size,
+                hasPhysicalNotch: geo.hasPhysicalNotch
+            )
+            let earPadding: CGFloat = 11
+            let width = layout.totalWidth + (earPadding * 2)
+            let height = layout.height
+            let originX = ((NotchGeometry.canvasWidth - width) / 2.0) + layout.horizontalCenterOffset
+            let originY = NotchGeometry.canvasHeight - height
+            return CGRect(x: originX, y: originY, width: width, height: height)
+        }
+
+        // Start with ignoresMouseEvents = true when closed/resting so the transparent 560x260 canvas
+        // never blocks clicks on browser tabs, menu bar items, or app titlebars near the notch.
+        panel.ignoresMouseEvents = (coordinator.posture != .expandedCard)
+        panel.contentView = hostingView
+        panel.setFrame(initialGeo.canvasWindowFrame, display: true)
+        panel.orderFrontRegardless()
+        self.panel = panel
+
+        // Dynamically toggle window-level click-through whenever the posture changes:
+        // - When closed (.resting, .compactWings, .transientHUD): `ignoresMouseEvents = true` (zero invisible wall!)
+        // - When open (.expandedCard): `ignoresMouseEvents = false` so buttons/sliders inside the card are clickable.
+        coordinator.$posture
+            .receive(on: RunLoop.main)
+            .sink { [weak self] newPosture in
+                guard let self, let panel = self.panel else { return }
+                let shouldCaptureClicks = (newPosture == .expandedCard)
+                if panel.ignoresMouseEvents == shouldCaptureClicks {
+                    panel.ignoresMouseEvents = !shouldCaptureClicks
+                }
+            }
+            .store(in: &cancellables)
+
+        coordinator.$hideFromScreenCapture
+            .receive(on: RunLoop.main)
+            .sink { [weak self] hideCapture in
+                self?.panel?.sharingType = hideCapture ? .none : .readOnly
+            }
+            .store(in: &cancellables)
+
+        geometryMonitor.$activeGeometry
+            .receive(on: RunLoop.main)
+            .sink { [weak self] updatedGeo in
+                self?.panel?.setFrame(updatedGeo.canvasWindowFrame, display: true)
+            }
+            .store(in: &cancellables)
+
+        startMouseHoverTracking()
+    }
+
+    /// Global screen-coordinate mouse tracking so hovering over the notch works 100% reliably
+    /// even while `panel.ignoresMouseEvents = true` and another application is in the foreground.
+    private func startMouseHoverTracking() {
+        stopMouseHoverTracking()
+
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged]
+        ) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.evaluateCursorLocation(eventType: event.type)
+            }
+        }
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged]
+        ) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.evaluateCursorLocation(eventType: event.type)
+            }
+            return event
+        }
+
+        hoverPollTimer = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.evaluateCursorLocation(eventType: nil)
+            }
+        }
+    }
+
+    private func stopMouseHoverTracking() {
+        if let global = globalMouseMonitor {
+            NSEvent.removeMonitor(global)
+            globalMouseMonitor = nil
+        }
+        if let local = localMouseMonitor {
+            NSEvent.removeMonitor(local)
+            localMouseMonitor = nil
+        }
+        hoverPollTimer?.invalidate()
+        hoverPollTimer = nil
+    }
+
+    private func evaluateCursorLocation(eventType: NSEvent.EventType?) {
+        let mouseScreenPoint = NSEvent.mouseLocation
+        let geo = geometryMonitor.activeGeometry
+        let layout = coordinator.targetLayout(
+            for: geo.notchFrame.size,
+            hasPhysicalNotch: geo.hasPhysicalNotch
+        )
+
+        let earPadding: CGFloat = 11
+        let activeWidth = layout.totalWidth + (earPadding * 2)
+        let activeHeight = layout.height
+
+        let globalNotchRect = CGRect(
+            x: geo.notchFrame.midX - (activeWidth / 2.0) + layout.horizontalCenterOffset,
+            y: geo.screenFrame.maxY - activeHeight,
+            width: activeWidth,
+            height: activeHeight
+        )
+
+        // IMPORTANT: Only apply the expanded `hoverExitMarginPx` buffer while the island is ACTUALLY open (`.expandedCard`).
+        // When the island is closed, use the exact tight notch rect so we never create a large hover zone below the notch.
+        let isExpandedOpen = (coordinator.posture == .expandedCard)
+        let exitMargin = CGFloat(max(4.0, coordinator.hoverExitMarginPx))
+        let hitZone = isExpandedOpen
+            ? globalNotchRect.insetBy(dx: -exitMargin, dy: -exitMargin)
+            : globalNotchRect
+
+        // If the island is expanded and the user clicks outside the actual black card (even inside the exit margin buffer),
+        // collapse immediately so their click goes straight to the underlying window.
+        if isExpandedOpen, eventType == .leftMouseDown, !globalNotchRect.contains(mouseScreenPoint) {
+            isCursorInsideNotch = false
+            coordinator.handleHoverExited()
+            return
+        }
+
+        let inside = hitZone.contains(mouseScreenPoint)
+        if inside != isCursorInsideNotch {
+            isCursorInsideNotch = inside
+            if inside {
+                coordinator.handleHoverEntered()
+            } else {
+                coordinator.handleHoverExited()
+            }
+        }
+    }
+
+    public func close() {
+        stopMouseHoverTracking()
+        panel?.close()
+        panel = nil
+    }
+}
