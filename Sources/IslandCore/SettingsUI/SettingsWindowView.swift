@@ -80,6 +80,7 @@ public struct SettingsWindowView: View {
     @ObservedObject public var batteryPlugin: BatteryPowerPlugin
     @ObservedObject public var wifiPlugin: WiFiStatusPlugin
     @ObservedObject public var bluetoothPlugin: BluetoothStatusPlugin
+    @ObservedObject public var airDropPlugin: AirDropPlugin
     @ObservedObject public var accessibilityManager: AccessibilityManager
 
     @State private var selectedTab: SettingsSidebarTab = .general
@@ -96,6 +97,7 @@ public struct SettingsWindowView: View {
         batteryPlugin: BatteryPowerPlugin,
         wifiPlugin: WiFiStatusPlugin,
         bluetoothPlugin: BluetoothStatusPlugin,
+        airDropPlugin: AirDropPlugin,
         accessibilityManager: AccessibilityManager
     ) {
         self.coordinator = coordinator
@@ -107,6 +109,7 @@ public struct SettingsWindowView: View {
         self.batteryPlugin = batteryPlugin
         self.wifiPlugin = wifiPlugin
         self.bluetoothPlugin = bluetoothPlugin
+        self.airDropPlugin = airDropPlugin
         self.accessibilityManager = accessibilityManager
     }
 
@@ -566,13 +569,44 @@ public struct SettingsWindowView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                groupTitle("AirDrop")
+                settingsCard {
+                    settingsMasterToggleRow(
+                        icon: "airplayaudio",
+                        iconColor: .cyan,
+                        title: "AirDrop Receiver",
+                        isOn: Binding(
+                            get: { airDropPlugin.isEnabled },
+                            set: { registry.setPluginEnabled(id: airDropPlugin.id, isEnabled: $0) }
+                        )
+                    )
+                    rowDivider
+                    settingsToggleRow(
+                        title: "Replace system AirDrop notification",
+                        isOn: $airDropPlugin.replaceSystemNotification
+                    )
+                    rowDivider
+                    settingsToggleRow(
+                        title: "Automatically open received web links",
+                        isOn: $airDropPlugin.autoOpenLinks
+                    )
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Preview")
-                HStack(spacing: 10) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     simButton(title: "Test Connected Bluetooth", icon: "headphones") {
                         bluetoothPlugin.triggerConnectedDevicePreview()
                     }
                     simButton(title: "Test Wi-Fi Connected", icon: "wifi") {
                         wifiPlugin.presentWiFiStatus(isConnected: true, ssid: "Home-5G")
+                    }
+                    simButton(title: "Simulate AirDrop File", icon: "airplayaudio") {
+                        airDropPlugin.simulateIncomingFileRequest()
+                    }
+                    simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
+                        airDropPlugin.simulateIncomingLinkRequest()
                     }
                 }
             }
@@ -928,6 +962,12 @@ public struct SettingsWindowView: View {
                 }
                 simButton(title: "Test Connected Bluetooth", icon: "headphones") {
                     bluetoothPlugin.triggerConnectedDevicePreview()
+                }
+                simButton(title: "Simulate AirDrop File", icon: "airplayaudio") {
+                    airDropPlugin.simulateIncomingFileRequest()
+                }
+                simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
+                    airDropPlugin.simulateIncomingLinkRequest()
                 }
                 simButton(title: "Test Bluetooth Disconnected", icon: "headphones") {
                     bluetoothPlugin.presentBluetoothEvent(

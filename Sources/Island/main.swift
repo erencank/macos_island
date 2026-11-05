@@ -15,6 +15,7 @@ final class IslandAppDelegate: NSObject, NSApplicationDelegate {
     private let batteryPlugin = BatteryPowerPlugin()
     private let wifiPlugin = WiFiStatusPlugin()
     private let bluetoothPlugin = BluetoothStatusPlugin()
+    private let airDropPlugin = AirDropPlugin()
 
     private var notchWindowController: NotchWindowController?
     private var settingsWindow: NSWindow?
@@ -39,6 +40,7 @@ final class IslandAppDelegate: NSObject, NSApplicationDelegate {
         registry.register(batteryPlugin)
         registry.register(wifiPlugin)
         registry.register(bluetoothPlugin)
+        registry.register(airDropPlugin)
 
         // Create and display the Notch Dynamic Island window
         let mediaService = nowPlayingPlugin.mediaService
@@ -126,6 +128,7 @@ final class IslandAppDelegate: NSObject, NSApplicationDelegate {
             batteryPlugin: batteryPlugin,
             wifiPlugin: wifiPlugin,
             bluetoothPlugin: bluetoothPlugin,
+            airDropPlugin: airDropPlugin,
             accessibilityManager: .shared
         )
 

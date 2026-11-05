@@ -91,6 +91,8 @@ cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
     <string>Island uses Location Services to display the connected Wi-Fi network name (SSID) in the Dynamic Island.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Island uses Location Services to display the connected Wi-Fi network name (SSID) in the Dynamic Island.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Island accesses the Downloads folder to open and reveal received AirDrop files.</string>
 </dict>
 </plist>
 EOF

@@ -199,6 +199,72 @@ struct IslandTestsRunner {
             print("  [PASS] testStateCoordinatorSilhouetteAndBluetoothCategorizer")
         }
 
+        // 6. Test Incoming AirDrop Receiver State Machine (Expand on Request -> Shrink to Compact Wings on Accept -> Collapse on Decline)
+        await MainActor.run {
+            let coordinator = NotchStateCoordinator(hoverExpandDelayMs: 50)
+            let airDropPlugin = AirDropPlugin()
+            airDropPlugin.isEnabled = true
+            airDropPlugin.start(coordinator: coordinator)
+
+            // Simulate incoming file transfer request -> should auto-expand to .expandedCard without hover
+            airDropPlugin.simulateIncomingFileRequest()
+            check(coordinator.posture == .expandedCard, "Incoming AirDrop confirmation should automatically expand the Island into .expandedCard")
+            check(airDropPlugin.receiverService.activeSession?.phase == .awaitingConfirmation, "Session phase should be .awaitingConfirmation")
+
+            // Accept transfer -> should transition to .transferring and collapse Island into .compactWings
+            airDropPlugin.acceptTransfer()
+            check(airDropPlugin.receiverService.activeSession?.phase == .transferring, "Accepting AirDrop should transition session phase to .transferring")
+            check(coordinator.posture == .compactWings, "Accepted AirDrop transfer should shrink Island to .compactWings while downloading")
+
+            // Decline/Cancel transfer -> should clear activity and return Island to .resting
+            airDropPlugin.declineTransfer()
+            check(airDropPlugin.receiverService.activeSession == nil, "Declining AirDrop should clear active session")
+            check(coordinator.posture == .resting, "Declining AirDrop should collapse Island back to .resting")
+
+            // Test NotificationCenter AirDrop alert string parser (e.g. "cashyos-desktop would like to share a photo")
+            let parsedPhoto = AirDropReceiverService.parseAirDropAlertStrings([
+                "AirDrop",
+                "cashyos-desktop would like to share a photo",
+                "Decline",
+                "Accept"
+            ])
+            check(parsedPhoto.sender == "cashyos-desktop", "Should extract sender name 'cashyos-desktop'")
+            check(parsedPhoto.itemTitle == "Photo", "Should extract clean item title 'Photo'")
+            check(parsedPhoto.isLink == false, "Photo share should not be marked as link")
+            check(parsedPhoto.symbolName == "photo.fill", "Photo share should use photo.fill icon")
+            check(parsedPhoto.isIncomingRequest == true, "Banner with 'would like to share' should be marked as incoming request")
+
+            // Test post-transfer completion banner (e.g. "Open" / "Show in Finder" without "would like to share")
+            let parsedCompletion = AirDropReceiverService.parseAirDropAlertStrings([
+                "AirDrop",
+                "preferences.toml",
+                "Open",
+                "Show in Finder"
+            ])
+            check(parsedCompletion.isIncomingRequest == false, "Post-download completion banner must not be treated as a new incoming ask request")
+
+            // Test priority preemption between persistent activities (AirDrop .critical over NowPlaying .background)
+            let mediaPayload = NotchActivityPayload(
+                pluginID: "com.island.plugin.nowplaying",
+                priority: .background,
+                posture: .compactWings
+            )
+            coordinator.publishPersistentActivity(mediaPayload)
+            check(coordinator.persistentActivity?.pluginID == "com.island.plugin.nowplaying", "Now Playing should be active when alone")
+
+            airDropPlugin.simulateIncomingFileRequest()
+            check(coordinator.persistentActivity?.pluginID == airDropPlugin.id, "Critical AirDrop activity must preempt background Now Playing")
+            check(coordinator.posture == .expandedCard, "Second incoming AirDrop must expand the Island into .expandedCard")
+
+            // When AirDrop is dismissed, Now Playing should automatically resume as the active persistent activity
+            airDropPlugin.declineTransfer()
+            check(coordinator.persistentActivity?.pluginID == "com.island.plugin.nowplaying", "Now Playing should resume after AirDrop is dismissed")
+            coordinator.clearPersistentActivity(pluginID: "com.island.plugin.nowplaying")
+
+            airDropPlugin.stop()
+            print("  [PASS] testIncomingAirDropReceiverStateMachine")
+        }
+
         print("==> Test Results: \(passed) checks passed, \(failed) failed.")
         if failed > 0 {
             Foundation.exit(1)

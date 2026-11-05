@@ -112,6 +112,7 @@ public final class NotchStateCoordinator: ObservableObject {
 
     @Published public private(set) var persistentActivity: NotchActivityPayload?
     @Published public private(set) var activeTransientHUD: NotchActivityPayload?
+    private var activitiesByPluginID: [String: NotchActivityPayload] = [:]
 
     /// Active visual calibration mode shown in the notch when adjusting Tuning sliders in Settings
     @Published public private(set) var activeTuningAxis: NotchTuningAxis?
@@ -246,25 +247,53 @@ public final class NotchStateCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Activity Publishing (with smooth spring animations)
+    // MARK: - Activity Publishing (with Priority Queue & Smooth Spring Animations)
 
     public func publishPersistentActivity(_ payload: NotchActivityPayload) {
         let wasResting = (persistentActivity == nil)
+        let previousTop = persistentActivity
+        activitiesByPluginID[payload.pluginID] = payload
+
+        let nextTop = highestPriorityPersistentActivity()
+        let transitionedFromForcedExpanded = (previousTop?.posture == .expandedCard && nextTop?.posture != .expandedCard)
+
         withAnimation(wasResting ? IslandSprings.expand : IslandSprings.hudProgress) {
-            persistentActivity = payload
+            if transitionedFromForcedExpanded {
+                hoverExpandTask?.cancel()
+                isHovering = false
+                isPressTensionActive = false
+            }
+            persistentActivity = nextTop
             recalculatePosture()
         }
     }
 
-    public func clearPersistentActivity(pluginID: String) {
-        guard persistentActivity?.pluginID == pluginID else { return }
+    public func clearPersistentActivity(pluginID: String, forceCollapseHover: Bool = false) {
+        guard activitiesByPluginID[pluginID] != nil || persistentActivity?.pluginID == pluginID else { return }
+        activitiesByPluginID.removeValue(forKey: pluginID)
+        let nextTop = highestPriorityPersistentActivity()
+
         withAnimation(IslandSprings.collapse) {
-            persistentActivity = nil
+            if forceCollapseHover {
+                hoverExpandTask?.cancel()
+                isHovering = false
+                isPressTensionActive = false
+            }
+            persistentActivity = nextTop
             // Do NOT force-close `isHovering` if the user's cursor is still inside the expanded card
             // (e.g. right after clicking Pause!). Let `handleHoverExited()` collapse it naturally
             // when the user moves their cursor out of the hover zone.
             recalculatePosture()
         }
+    }
+
+    private func highestPriorityPersistentActivity() -> NotchActivityPayload? {
+        activitiesByPluginID.values.max(by: { lhs, rhs in
+            if lhs.priority != rhs.priority {
+                return lhs.priority < rhs.priority
+            }
+            return lhs.id < rhs.id
+        })
     }
 
     public func presentTransientHUD(_ payload: NotchActivityPayload) {
@@ -348,8 +377,8 @@ public final class NotchStateCoordinator: ObservableObject {
             return
         }
 
-        if persistentActivity != nil {
-            posture = .compactWings
+        if let activity = persistentActivity {
+            posture = activity.posture == .expandedCard ? .expandedCard : .compactWings
             return
         }
 
