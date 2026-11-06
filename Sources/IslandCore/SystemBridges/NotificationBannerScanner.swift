@@ -129,6 +129,13 @@ public final class NotificationBannerScanner {
         if role == kAXMenuBarRole { return }
         let currentWindow = role == kAXWindowRole ? element : enclosingWindow
 
+        if let currentWindow, isSidebarWindow(currentWindow) {
+            return
+        }
+        if isSidebarWindow(element) {
+            return
+        }
+
         if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
             var texts: [String] = []
             var buttons: [BannerButton] = []
@@ -210,6 +217,31 @@ public final class NotificationBannerScanner {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
         return ref as? String
+    }
+
+    private static func isSidebarWindow(_ window: AXUIElement) -> Bool {
+        if let title = string(window, kAXTitleAttribute),
+           title.localizedCaseInsensitiveContains("Notification Cent") ||
+           title.localizedCaseInsensitiveContains("Berichten") {
+            return true
+        }
+        if let id = string(window, "AXIdentifier"),
+           id.localizedCaseInsensitiveContains("NotificationCenter") {
+            return true
+        }
+        if let size = size(of: window), size.height > 300 {
+            return true
+        }
+        return false
+    }
+
+    private static func size(of element: AXUIElement) -> CGSize? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &ref) == .success,
+              let value = ref else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+        return size
     }
 
     /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.

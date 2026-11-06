@@ -628,7 +628,7 @@ public struct SettingsWindowView: View {
     private var appNotificationsPane: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
-                groupTitle("App Notifications")
+                groupTitle("General")
                 settingsCard {
                     settingsMasterToggleRow(
                         icon: "bell.badge.fill",
@@ -640,20 +640,6 @@ public struct SettingsWindowView: View {
                         )
                     )
                     rowDivider
-                    settingsToggleRow(title: "Slack messages", isOn: $notificationPlugin.slackEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Hide system banner for Slack", isOn: $notificationPlugin.hideSlackBanner)
-                    rowDivider
-                    settingsToggleRow(title: "Microsoft Teams messages and calls", isOn: $notificationPlugin.teamsEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Hide system banner for Teams", isOn: $notificationPlugin.hideTeamsBanner)
-                    rowDivider
-                    settingsToggleRow(title: "Outlook emails", isOn: $notificationPlugin.outlookEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Hide system banner for Outlook", isOn: $notificationPlugin.hideOutlookBanner)
-                    rowDivider
-                    settingsToggleRow(title: "Other apps (generic)", isOn: $notificationPlugin.otherAppsEnabled)
-                    rowDivider
                     settingsSliderRow(
                         title: "Maximum notification width",
                         badgeText: "\(Int(notificationPlugin.maxWingWidth)) px",
@@ -664,6 +650,48 @@ public struct SettingsWindowView: View {
                             notificationPlugin.triggerWidthPreview(isEditing: editing)
                         }
                     )
+                    rowDivider
+                    settingsSliderRow(
+                        title: "Notification duration",
+                        badgeText: String(format: "%.1f s", notificationPlugin.messageDuration),
+                        value: $notificationPlugin.messageDuration,
+                        range: 2.0...10.0,
+                        step: 0.5
+                    )
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("Slack")
+                settingsCard {
+                    settingsToggleRow(title: "Show Slack messages", isOn: $notificationPlugin.slackEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner", isOn: $notificationPlugin.hideSlackBanner)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("Microsoft Teams")
+                settingsCard {
+                    settingsToggleRow(title: "Show messages and calls", isOn: $notificationPlugin.teamsEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner", isOn: $notificationPlugin.hideTeamsBanner)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("Microsoft Outlook")
+                settingsCard {
+                    settingsToggleRow(title: "Show emails", isOn: $notificationPlugin.outlookEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner", isOn: $notificationPlugin.hideOutlookBanner)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("Other Apps")
+                settingsCard {
+                    settingsToggleRow(title: "Show notifications from unsupported apps", isOn: $notificationPlugin.otherAppsEnabled)
                 }
             }
 

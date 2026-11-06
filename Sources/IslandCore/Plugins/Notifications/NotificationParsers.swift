@@ -6,7 +6,19 @@ public protocol AppNotificationParser: Sendable {
 }
 
 enum BannerTextCleaner {
-    private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant"]
+    private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant", "yesterday", "gisteren", "gestern", "hier"]
+    private static let relativeTimeRegex = try? NSRegularExpression(
+        pattern: #"^(?:vor\s+|il y a\s+)?\d+\s*(?:s|m|h|d|min|mins|minute|minutes|hour|hours|sec|secs|uur|minuten|seconden)\s*(?:ago|geleden)?$"#,
+        options: .caseInsensitive
+    )
+
+    static func isTimeMarker(_ text: String) -> Bool {
+        let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if timeMarkers.contains(lowered) { return true }
+        guard let regex = relativeTimeRegex else { return false }
+        let range = NSRange(lowered.startIndex..., in: lowered)
+        return regex.firstMatch(in: lowered, range: range) != nil
+    }
 
     /// Removes combined summary strings (Notification Center often exposes both the joined
     /// description and each individual label), button titles, the app name and timestamps.
@@ -16,7 +28,7 @@ enum BannerTextCleaner {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { !buttonTitles.contains($0.lowercased()) }
-            .filter { !timeMarkers.contains($0.lowercased()) }
+            .filter { !isTimeMarker($0) }
             .filter { $0.caseInsensitiveCompare(appName) != .orderedSame }
 
         return candidates.filter { text in

@@ -81,7 +81,8 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         hideTeamsBanner = defaults.object(forKey: Self.hideTeamsKey) as? Bool ?? false
         hideOutlookBanner = defaults.object(forKey: Self.hideOutlookKey) as? Bool ?? false
         otherAppsEnabled = defaults.object(forKey: Self.otherAppsKey) as? Bool ?? false
-        messageDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
+        let savedDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
+        messageDuration = max(1.0, min(15.0, savedDuration))
         maxWingWidth = defaults.object(forKey: Self.maxWingWidthKey) as? Double ?? 185.0
 
         scanner.onBannersChanged = { [weak self] banners in

@@ -267,6 +267,19 @@ struct IslandTestsRunner {
 
         // Notification parsers
         do {
+            check(BannerTextCleaner.isTimeMarker("now"), "Time marker 'now'")
+            check(BannerTextCleaner.isTimeMarker("nu"), "Time marker 'nu'")
+            check(BannerTextCleaner.isTimeMarker("yesterday"), "Time marker 'yesterday'")
+            check(BannerTextCleaner.isTimeMarker("gisteren"), "Time marker 'gisteren'")
+            check(BannerTextCleaner.isTimeMarker("10m ago"), "Relative time marker '10m ago'")
+            check(BannerTextCleaner.isTimeMarker("10m"), "Relative time marker '10m'")
+            check(BannerTextCleaner.isTimeMarker("19m ago"), "Relative time marker '19m ago'")
+            check(BannerTextCleaner.isTimeMarker("2h ago"), "Relative time marker '2h ago'")
+            check(BannerTextCleaner.isTimeMarker("vor 10 Min"), "Relative time marker 'vor 10 Min'")
+            check(BannerTextCleaner.isTimeMarker("il y a 5 min"), "Relative time marker 'il y a 5 min'")
+            check(!BannerTextCleaner.isTimeMarker("Bob Niroomand"), "Normal name is not time marker")
+            check(!BannerTextCleaner.isTimeMarker("team-stock-allocation-engineering"), "Channel is not time marker")
+
             let parsers = NotificationParserSet()
 
             let slackChannel = RawBanner(texts: ["Slack, Alice (#general), Standup moved", "Slack", "Alice (#general)", "Standup moved", "now"])
@@ -412,6 +425,10 @@ struct IslandTestsRunner {
 
             plugin.maxWingWidth = 210
             check(plugin.maxWingWidth == 210, "Max wing width update")
+
+            check(plugin.messageDuration >= 2.0 && plugin.messageDuration <= 10.0, "Message duration is within valid bounds")
+            plugin.messageDuration = 6.5
+            check(UserDefaults.standard.double(forKey: "island.notifications.messageDuration") == 6.5, "Message duration persists to UserDefaults")
 
             plugin.triggerWidthPreview(isEditing: true)
             check(plugin.isCalibratingWidth == true, "Trigger width preview should enter calibrating state")
