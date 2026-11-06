@@ -371,6 +371,74 @@ struct IslandTestsRunner {
             print("  [PASS] testNotificationBridgePlugin")
         }
 
+        // 8. Test Now Playing Track Change Animation Models, Directions, and Settings
+        do {
+            let trackA = NowPlayingTrack(title: "Track 1", artist: "Artist A")
+            let trackB = NowPlayingTrack(title: "Track 1", artist: "Artist B")
+            let trackC = NowPlayingTrack(title: "Track 2", artist: "Artist A")
+
+            check(trackA.trackIdentity != trackB.trackIdentity, "Different artists must have distinct track identities")
+            check(trackA.trackIdentity != trackC.trackIdentity, "Different titles must have distinct track identities")
+            check(trackA.trackIdentity == "\(trackA.title)///\(trackA.artist)", "Identity format check")
+
+            let mediaService = MediaRemoteStreamService()
+            check(mediaService.latestTrackChange == nil, "Initial latestTrackChange should be nil")
+
+            mediaService.setSimulatedTrack(trackA)
+            check(mediaService.latestTrackChange == nil, "First simulated track load should not emit track change event")
+
+            mediaService.setSimulatedTrack(trackB, direction: .forward)
+            check(mediaService.latestTrackChange?.title == "Track 1", "Track change title should match")
+            check(mediaService.latestTrackChange?.artist == "Artist B", "Track change artist should match")
+            check(mediaService.latestTrackChange?.direction == .forward, "Forward direction should match")
+
+            mediaService.sendCommand(.previousTrack)
+            mediaService.setSimulatedTrack(trackC)
+            check(mediaService.latestTrackChange?.direction == .backward, "Track change after previousTrack command should infer backward direction")
+
+            let plugin = NowPlayingPlugin()
+            check(plugin.showTrackInfoOnChange == true, "showTrackInfoOnChange should default to true")
+            check(plugin.trackInfoDisplayDuration == 2.5, "trackInfoDisplayDuration should default to 2.5 seconds")
+            check(plugin.waveformIntensity == .medium, "waveformIntensity should default to .medium")
+
+            plugin.waveformIntensity = .calm
+            check(plugin.waveformIntensity == .calm, "waveformIntensity update to .calm")
+            plugin.waveformIntensity = .intense
+            check(plugin.waveformIntensity == .intense, "waveformIntensity update to .intense")
+
+            // Verify AudioWaveformView initializes across all intensities playing and paused
+            for intensity in WaveformIntensity.allCases {
+                let wavePlaying = AudioWaveformView(isPlaying: true, tintColor: .accentColor, intensity: intensity)
+                _ = wavePlaying.body
+                let wavePaused = AudioWaveformView(isPlaying: false, tintColor: .accentColor, intensity: intensity)
+                _ = wavePaused.body
+            }
+
+            plugin.trackInfoDisplayDuration = 4.5
+            check(plugin.trackInfoDisplayDuration == 4.5, "trackInfoDisplayDuration update")
+
+            let coordinator = NotchStateCoordinator()
+            plugin.start(coordinator: coordinator)
+
+            plugin.simulateNextTrack()
+            check(coordinator.persistentActivity != nil, "Persistent activity should be published for simulated track")
+            check(coordinator.persistentActivity?.wingSizes.leftWidth ?? 0 > 34, "Left wing should expand to reveal track info")
+            check(plugin.mediaService.latestTrackChange?.direction == .forward, "simulateNextTrack direction should be forward")
+
+            plugin.simulatePreviousTrack()
+            check(coordinator.persistentActivity?.wingSizes.leftWidth ?? 0 > 34, "Left wing should remain expanded on previous track")
+            check(plugin.mediaService.latestTrackChange?.direction == .backward, "simulatePreviousTrack direction should be backward")
+
+            plugin.showTrackInfoOnChange = false
+            plugin.clearSimulatedTrack()
+            plugin.simulateTrack()
+            check(coordinator.persistentActivity?.wingSizes.leftWidth == 34, "Left wing should stay standard 34 width when track info reveal is disabled")
+
+            plugin.stop()
+            check(coordinator.persistentActivity == nil, "Persistent activity should clear on stop")
+            print("  [PASS] testNowPlayingTrackChangeAnimationAndSettings")
+        }
+
         print("==> Test Results: \(passed) checks passed, \(failed) failed.")
         if failed > 0 {
             Foundation.exit(1)

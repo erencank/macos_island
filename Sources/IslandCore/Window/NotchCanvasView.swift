@@ -30,7 +30,7 @@ public struct NotchSplitWingContainer<Leading: View, Trailing: View>: View {
             }
             .padding(.leading, 8)
             .padding(.trailing, 4)
-            .frame(width: max(0, leftWingWidth), alignment: .center)
+            .frame(width: max(0, leftWingWidth), alignment: .leading)
             .clipped()
 
             // Physical Hardware Notch Dead-Zone Cutoff (exact camera housing width)

@@ -42,42 +42,125 @@ public enum NowPlayingAuxiliaryAction: String, CaseIterable, Identifiable, Senda
     }
 }
 
-/// Animated multi-bar equalizer visualizer matching the right-side waveform in Alcove
+public enum WaveformIntensity: String, CaseIterable, Identifiable, Sendable {
+    case calm
+    case medium
+    case intense
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .calm: return "Calm"
+        case .medium: return "Medium"
+        case .intense: return "Intense"
+        }
+    }
+    public var symbolName: String {
+        switch self {
+        case .calm: return "water.waves"
+        case .medium: return "waveform"
+        case .intense: return "bolt.fill"
+        }
+    }
+}
+
+/// Animated multi-bar equalizer visualizer matching the right-side waveform in Alcove,
+/// driven by native spring physics with configurable intensity dynamics (Calm, Medium, Intense).
 public struct AudioWaveformView: View {
     public let isPlaying: Bool
     public let tintColor: Color
+    public let intensity: WaveformIntensity
 
     private let barCount = 5
-    private let frequencies: [Double] = [3.4, 4.8, 2.9, 5.3, 3.9]
-    private let phases: [Double] = [0.0, 1.1, 2.3, 0.7, 1.8]
+    private let barSpeeds: [Double] = [1.0, 0.95, 1.05, 0.92, 1.02]
 
-    public init(isPlaying: Bool, tintColor: Color) {
+    public init(
+        isPlaying: Bool,
+        tintColor: Color,
+        intensity: WaveformIntensity = .medium
+    ) {
         self.isPlaying = isPlaying
         self.tintColor = tintColor
+        self.intensity = intensity
+    }
+
+    private var phases: [[CGFloat]] {
+        switch intensity {
+        case .calm:
+            return [
+                [4.0, 7.5, 5.0, 9.0],
+                [4.5, 9.5, 6.0, 11.0],
+                [5.0, 11.5, 7.0, 12.0],
+                [4.5, 9.5, 6.0, 11.0],
+                [3.5, 7.0, 4.5, 8.5]
+            ]
+        case .medium:
+            return [
+                [4.0, 9.5, 6.0, 11.0],
+                [4.5, 13.0, 7.0, 14.5],
+                [5.0, 15.0, 8.0, 13.5],
+                [4.5, 12.5, 6.5, 14.0],
+                [3.5, 9.0, 5.0, 10.5]
+            ]
+        case .intense:
+            return [
+                [3.5, 13.5, 5.0, 12.0],
+                [4.0, 16.0, 6.5, 14.5],
+                [5.0, 16.5, 7.5, 15.0],
+                [4.0, 15.0, 6.0, 13.5],
+                [3.5, 12.0, 4.5, 10.5]
+            ]
+        }
+    }
+
+    private var springResponse: Double {
+        switch intensity {
+        case .calm: return 0.60
+        case .medium: return 0.46
+        case .intense: return 0.28
+        }
+    }
+
+    private var dampingFraction: Double {
+        switch intensity {
+        case .calm: return 0.95
+        case .medium: return 0.88
+        case .intense: return 0.72
+        }
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2.5) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    let height = barHeight(for: index, time: t)
-                    Capsule(style: .continuous)
-                        .fill(tintColor)
-                        .frame(width: 2.3, height: height)
-                        .animation(.easeInOut(duration: 0.14), value: isPlaying)
+        let activePhases = phases
+        let response = springResponse
+        let damping = dampingFraction
+
+        Group {
+            if isPlaying {
+                HStack(alignment: .center, spacing: 2.5) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        PhaseAnimator(activePhases[index]) { height in
+                            Capsule(style: .continuous)
+                                .fill(tintColor)
+                                .frame(width: 2.3, height: height)
+                        } animation: { _ in
+                            .spring(response: response * barSpeeds[index], dampingFraction: damping)
+                        }
+                        .id("\(intensity.rawValue)-\(index)")
+                    }
+                }
+                .id(intensity)
+            } else {
+                HStack(alignment: .center, spacing: 2.5) {
+                    ForEach(0..<barCount, id: \.self) { _ in
+                        Capsule(style: .continuous)
+                            .fill(tintColor.opacity(0.6))
+                            .frame(width: 2.3, height: 3.5)
+                    }
                 }
             }
         }
         .frame(height: 16)
-    }
-
-    private func barHeight(for index: Int, time: TimeInterval) -> CGFloat {
-        guard isPlaying else { return 3.5 }
-        let wave = (sin(time * frequencies[index] + phases[index]) + 1.0) * 0.5
-        let minHeight: CGFloat = 3.5
-        let maxHeight: CGFloat = index == 2 ? 15.0 : (index % 2 == 1 ? 13.0 : 10.5)
-        return minHeight + CGFloat(wave) * (maxHeight - minHeight)
+        .animation(.spring(response: 0.32, dampingFraction: 0.8), value: isPlaying)
     }
 }
 
@@ -133,15 +216,18 @@ public struct NowPlayingExpandedCardView: View {
     @ObservedObject public var mediaService: MediaRemoteStreamService
     public var themeStyle: NowPlayingThemeStyle
     public var auxiliaryAction: NowPlayingAuxiliaryAction
+    public var waveformIntensity: WaveformIntensity
 
     public init(
         mediaService: MediaRemoteStreamService,
         themeStyle: NowPlayingThemeStyle = .colored,
-        auxiliaryAction: NowPlayingAuxiliaryAction = .shuffle
+        auxiliaryAction: NowPlayingAuxiliaryAction = .shuffle,
+        waveformIntensity: WaveformIntensity = .medium
     ) {
         self.mediaService = mediaService
         self.themeStyle = themeStyle
         self.auxiliaryAction = auxiliaryAction
+        self.waveformIntensity = waveformIntensity
     }
 
     public var body: some View {
@@ -180,8 +266,10 @@ public struct NowPlayingExpandedCardView: View {
 
                 AudioWaveformView(
                     isPlaying: track.isPlaying,
-                    tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor
+                    tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor,
+                    intensity: waveformIntensity
                 )
+                .id("expanded-waveform-\(waveformIntensity.rawValue)")
                 .padding(.trailing, 4)
             }
 
@@ -346,6 +434,101 @@ private struct MediaTransportIconButton: View {
     }
 }
 
+/// Compact leading view for Now Playing wings:
+/// - Smooth directional slide transition for album artwork (next slides left, prev slides right)
+/// - Vivid accent-color glow pulse on track transition
+/// - Optional track title & artist text reveal
+public struct CompactNowPlayingLeadingView: View {
+    @ObservedObject public var mediaService: MediaRemoteStreamService
+    public var isShowingTrackInfo: Bool
+    public var accentColor: Color
+
+    @State private var glowOpacity: Double = 0.0
+    @State private var glowScale: CGFloat = 0.8
+
+    public init(
+        mediaService: MediaRemoteStreamService,
+        isShowingTrackInfo: Bool,
+        accentColor: Color
+    ) {
+        self.mediaService = mediaService
+        self.isShowingTrackInfo = isShowingTrackInfo
+        self.accentColor = accentColor
+    }
+
+    public var body: some View {
+        let track = mediaService.currentTrack
+        let direction = mediaService.latestTrackChange?.direction ?? .forward
+        let trackKey = track?.trackIdentity ?? "empty"
+
+        HStack(spacing: 8) {
+            ZStack {
+                // Accent glow behind artwork
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(accentColor)
+                    .frame(width: 22, height: 22)
+                    .blur(radius: 5)
+                    .scaleEffect(glowScale)
+                    .opacity(glowOpacity)
+
+                if let track = track {
+                    AlbumArtworkThumbnail(
+                        image: track.artworkImage,
+                        accentColor: track.dominantColor,
+                        size: 20,
+                        cornerRadius: 5
+                    )
+                    .id(trackKey)
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: direction == .forward ? .trailing : .leading)
+                                .combined(with: .opacity),
+                            removal: .move(edge: direction == .forward ? .leading : .trailing)
+                                .combined(with: .opacity)
+                        )
+                    )
+                }
+            }
+            .frame(width: 20, height: 20)
+
+            if isShowingTrackInfo, let track = track {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.title)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Text(track.artist)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+        }
+        .padding(.leading, 2)
+        .padding(.trailing, isShowingTrackInfo ? 4 : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.spring(response: 0.38, dampingFraction: 0.8), value: isShowingTrackInfo)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: trackKey)
+        .onReceive(mediaService.$latestTrackChange) { change in
+            guard change != nil else { return }
+            triggerGlow()
+        }
+    }
+
+    private func triggerGlow() {
+        glowOpacity = 0.95
+        glowScale = 1.35
+        withAnimation(.easeOut(duration: 0.7)) {
+            glowOpacity = 0.0
+            glowScale = 0.8
+        }
+    }
+}
+
 @MainActor
 public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
     public let id = "com.island.plugin.nowplaying"
@@ -382,10 +565,35 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             syncTrackWithCoordinator(mediaService.currentTrack)
         }
     }
+    @Published public var waveformIntensity: WaveformIntensity {
+        didSet {
+            guard oldValue != waveformIntensity else { return }
+            UserDefaults.standard.set(waveformIntensity.rawValue, forKey: "island.nowplaying.waveformIntensity")
+            syncTrackWithCoordinator(mediaService.currentTrack)
+        }
+    }
+    @Published public var showTrackInfoOnChange: Bool {
+        didSet {
+            UserDefaults.standard.set(showTrackInfoOnChange, forKey: "island.nowplaying.showTrackInfoOnChange")
+            if !showTrackInfoOnChange {
+                trackInfoDismissTask?.cancel()
+                trackInfoDismissTask = nil
+                isShowingTrackInfo = false
+                syncTrackWithCoordinator(mediaService.currentTrack)
+            }
+        }
+    }
+    @Published public var trackInfoDisplayDuration: Double {
+        didSet {
+            UserDefaults.standard.set(trackInfoDisplayDuration, forKey: "island.nowplaying.trackInfoDuration")
+        }
+    }
+    @Published public private(set) var isShowingTrackInfo: Bool = false
 
     public let mediaService = MediaRemoteStreamService()
     private weak var coordinator: NotchStateCoordinator?
     private var cancellables = Set<AnyCancellable>()
+    private var trackInfoDismissTask: Task<Void, Never>?
 
     public init() {
         let saved = UserDefaults.standard.object(forKey: "island.plugin.\(id).enabled") as? Bool ?? true
@@ -397,14 +605,26 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         self.disableCompactWaveform = UserDefaults.standard.object(forKey: "island.nowplaying.disableWaveform") as? Bool ?? false
         self.hideWhileSourceAppActive = UserDefaults.standard.object(forKey: "island.nowplaying.hideSourceActive") as? Bool ?? false
         self.auxiliaryAction = NowPlayingAuxiliaryAction(rawValue: UserDefaults.standard.string(forKey: "island.nowplaying.auxAction") ?? "") ?? .shuffle
+        let savedIntensity = UserDefaults.standard.string(forKey: "island.nowplaying.waveformIntensity") ?? ""
+        self.waveformIntensity = WaveformIntensity(rawValue: savedIntensity) ?? .medium
+        let savedShowTrackInfo = UserDefaults.standard.object(forKey: "island.nowplaying.showTrackInfoOnChange") as? Bool ?? true
+        self.showTrackInfoOnChange = savedShowTrackInfo
+        let savedDuration = UserDefaults.standard.object(forKey: "island.nowplaying.trackInfoDuration") as? Double ?? 2.5
+        self.trackInfoDisplayDuration = max(1.0, min(6.0, savedDuration))
     }
 
     public func start(coordinator: NotchStateCoordinator) {
         self.coordinator = coordinator
         cancellables.removeAll()
 
+        mediaService.$latestTrackChange
+            .compactMap { $0 }
+            .sink { [weak self] change in
+                self?.handleTrackChange(change)
+            }
+            .store(in: &cancellables)
+
         mediaService.$currentTrack
-            .receive(on: RunLoop.main)
             .sink { [weak self] track in
                 self?.syncTrackWithCoordinator(track)
             }
@@ -414,9 +634,28 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
     }
 
     public func stop() {
+        trackInfoDismissTask?.cancel()
+        trackInfoDismissTask = nil
+        isShowingTrackInfo = false
         mediaService.stop()
         cancellables.removeAll()
         coordinator?.clearPersistentActivity(pluginID: id)
+    }
+
+    private func handleTrackChange(_ change: TrackChangeEvent) {
+        guard isEnabled, showTrackInfoOnChange, let coordinator, coordinator.posture != .expandedCard else { return }
+
+        trackInfoDismissTask?.cancel()
+        isShowingTrackInfo = true
+        syncTrackWithCoordinator(mediaService.currentTrack)
+
+        let duration = max(1.0, trackInfoDisplayDuration)
+        trackInfoDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.isShowingTrackInfo = false
+            self.syncTrackWithCoordinator(self.mediaService.currentTrack)
+        }
     }
 
     public func simulateTrack() {
@@ -435,8 +674,53 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         mediaService.setSimulatedTrack(demoTrack)
     }
 
+    public func simulateNextTrack() {
+        let nextTrack = NowPlayingTrack(
+            title: "Golden Hour",
+            artist: "JVKE",
+            album: "this is what ____ feels like",
+            duration: 209,
+            elapsedTime: 12,
+            isPlaying: true,
+            appName: "Spotify",
+            artworkImage: nil,
+            dominantColor: Color(red: 0.96, green: 0.65, blue: 0.28)
+        )
+        mediaService.setSimulatedTrack(nextTrack, direction: .forward)
+    }
+
+    public func simulatePreviousTrack() {
+        let prevTrack = NowPlayingTrack(
+            title: "blue jean",
+            artist: "Hazlett",
+            album: "Goodbye to the Valley Below",
+            duration: 275,
+            elapsedTime: 45,
+            isPlaying: true,
+            appName: "Spotify",
+            artworkImage: nil,
+            dominantColor: Color(red: 0.78, green: 0.34, blue: 0.44)
+        )
+        mediaService.setSimulatedTrack(prevTrack, direction: .backward)
+    }
+
     public func clearSimulatedTrack() {
+        trackInfoDismissTask?.cancel()
+        trackInfoDismissTask = nil
+        isShowingTrackInfo = false
         mediaService.setSimulatedTrack(nil)
+    }
+
+    public static func computeTrackInfoWingWidth(for track: NowPlayingTrack?) -> CGFloat {
+        guard let track else { return 120 }
+        let titleFont = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let artistFont = NSFont.systemFont(ofSize: 9.5, weight: .medium)
+        let titleWidth = (track.title as NSString).size(withAttributes: [.font: titleFont]).width
+        let artistWidth = (track.artist as NSString).size(withAttributes: [.font: artistFont]).width
+        let textWidth = max(titleWidth, artistWidth)
+        // 10 (leading pad: 8 container + 2 leading view) + 20 (artwork) + 8 (spacing) + textWidth + 10 (trailing pad)
+        let needed = 10 + 20 + 8 + textWidth + 10
+        return max(70, min(240, ceil(needed)))
     }
 
     private func syncTrackWithCoordinator(_ track: NowPlayingTrack?) {
@@ -447,11 +731,10 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         }
 
         let leading = AnyView(
-            AlbumArtworkThumbnail(
-                image: track.artworkImage,
-                accentColor: track.dominantColor,
-                size: 20,
-                cornerRadius: 5
+            CompactNowPlayingLeadingView(
+                mediaService: mediaService,
+                isShowingTrackInfo: isShowingTrackInfo,
+                accentColor: track.dominantColor
             )
         )
 
@@ -460,8 +743,10 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
                 if !disableCompactWaveform {
                     AudioWaveformView(
                         isPlaying: track.isPlaying,
-                        tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor
+                        tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor,
+                        intensity: waveformIntensity
                     )
+                    .id("compact-waveform-\(waveformIntensity.rawValue)")
                 }
             }
         )
@@ -470,15 +755,18 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             NowPlayingExpandedCardView(
                 mediaService: mediaService,
                 themeStyle: themeStyle,
-                auxiliaryAction: auxiliaryAction
+                auxiliaryAction: auxiliaryAction,
+                waveformIntensity: waveformIntensity
             )
         )
+
+        let leftWingWidth: CGFloat = isShowingTrackInfo ? Self.computeTrackInfoWingWidth(for: track) : 34
 
         let payload = NotchActivityPayload(
             pluginID: id,
             priority: .background,
             posture: .compactWings,
-            wingSizes: NotchWingSizes(leftWidth: 34, rightWidth: disableCompactWaveform ? 0 : 34),
+            wingSizes: NotchWingSizes(leftWidth: leftWingWidth, rightWidth: disableCompactWaveform ? 0 : 34),
             compactLeadingView: leading,
             compactTrailingView: trailing,
             expandedView: expanded,

@@ -11,7 +11,7 @@ Full architectural details are documented in [ARCHITECTURE_AND_DESIGN.md](file:/
 - **Fluid 120Hz ProMotion Morphing**: Custom `NotchSilhouetteShape` with concave top "ears" and continuous rounded bottom corners, rendered inside a click-through borderless `NSPanel` above the menu bar.
 - **Universal "Now Playing" Media Widget**:
   - Works with **Spotify**, **Apple Music**, and **browsers** (Safari, Chrome, Arc, Dia, etc.) via a bundled `MediaRemote` bridge + ScriptingBridge fallback.
-  - **Compact Wings**: Displays mini album art on the left of the notch and a color-tinted animated audio equalizer on the right.
+  - **Compact Wings**: Displays mini album art on the left of the notch and a color-tinted animated audio equalizer on the right. Features directional artwork sliding transitions, accent glow pulses, and configurable track title/artist reveal on track change.
   - **Hover / Click Expansion (`50ms` response)**: Expands into a full media card with high-res album artwork, elapsed/remaining scrubber, play/pause/skip/shuffle controls, and audio output indicator.
 - **System HUD Replacement (Sound & Display)**:
   - Intercepts hardware Volume (`F10`/`F11`/`F12`) and Brightness (`F1`/`F2`) keys via `CGEventTap` to suppress the native macOS corner HUD and render a sleek horizontal progress bar directly inside the notch.

@@ -907,11 +907,48 @@ public struct SettingsWindowView: View {
                     title: "Disable compact waveform",
                     isOn: $nowPlayingPlugin.disableCompactWaveform
                 )
+                if !nowPlayingPlugin.disableCompactWaveform {
+                    rowDivider
+                    HStack(spacing: 12) {
+                        ForEach(WaveformIntensity.allCases) { intensity in
+                            selectionTile(
+                                title: intensity.title,
+                                isSelected: nowPlayingPlugin.waveformIntensity == intensity
+                            ) {
+                                nowPlayingPlugin.waveformIntensity = intensity
+                            } content: {
+                                Image(systemName: intensity.symbolName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(
+                                        nowPlayingPlugin.waveformIntensity == intensity
+                                            ? SettingsTheme.accentTeal
+                                            : .white.opacity(0.65)
+                                    )
+                            }
+                        }
+                    }
+                    .padding(14)
+                }
                 rowDivider
                 settingsToggleRow(
                     title: "Hide while source app is active",
                     isOn: $nowPlayingPlugin.hideWhileSourceAppActive
                 )
+                rowDivider
+                settingsToggleRow(
+                    title: "Show track title and artist on change",
+                    isOn: $nowPlayingPlugin.showTrackInfoOnChange
+                )
+                if nowPlayingPlugin.showTrackInfoOnChange {
+                    rowDivider
+                    settingsSliderRow(
+                        title: "Track info duration",
+                        badgeText: String(format: "%.1f s", nowPlayingPlugin.trackInfoDisplayDuration),
+                        value: $nowPlayingPlugin.trackInfoDisplayDuration,
+                        range: 1.0...6.0,
+                        step: 0.5
+                    )
+                }
                 rowDivider
 
                 // Auxiliary Button Selector (Favorite / Shuffle / Repeat / Copy)
@@ -938,12 +975,22 @@ public struct SettingsWindowView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Preview")
-                HStack(spacing: 10) {
-                    simButton(title: "Simulate 'blue jean' Track", icon: "music.note") {
-                        nowPlayingPlugin.simulateTrack()
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        simButton(title: "Simulate Track", icon: "music.note") {
+                            nowPlayingPlugin.simulateTrack()
+                        }
+                        simButton(title: "Clear Track", icon: "xmark.circle") {
+                            nowPlayingPlugin.clearSimulatedTrack()
+                        }
                     }
-                    simButton(title: "Clear Simulated Track", icon: "xmark.circle") {
-                        nowPlayingPlugin.clearSimulatedTrack()
+                    HStack(spacing: 10) {
+                        simButton(title: "Simulate Next Track", icon: "forward.fill") {
+                            nowPlayingPlugin.simulateNextTrack()
+                        }
+                        simButton(title: "Simulate Prev Track", icon: "backward.fill") {
+                            nowPlayingPlugin.simulatePreviousTrack()
+                        }
                     }
                 }
             }
