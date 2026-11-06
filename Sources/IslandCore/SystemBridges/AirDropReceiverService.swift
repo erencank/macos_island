@@ -880,6 +880,8 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         guard depth <= 12 else { return }
 
         let role = Self.axString(element, kAXRoleAttribute) ?? ""
+        // NotificationCenter exposes the frontmost app's whole menu bar; walking it blocks the main thread for seconds.
+        if role == (kAXMenuBarRole as String) { return }
         let currentWindow = (role == (kAXWindowRole as String)) ? element : enclosingWindow
         let subrole = Self.axString(element, kAXSubroleAttribute) ?? ""
         if subrole == "AXNotificationCenterAlert" || subrole == "AXNotificationCenterBanner" {

@@ -81,6 +81,7 @@ public struct SettingsWindowView: View {
     @ObservedObject public var wifiPlugin: WiFiStatusPlugin
     @ObservedObject public var bluetoothPlugin: BluetoothStatusPlugin
     @ObservedObject public var airDropPlugin: AirDropPlugin
+    @ObservedObject public var notificationPlugin: NotificationBridgePlugin
     @ObservedObject public var accessibilityManager: AccessibilityManager
 
     @State private var selectedTab: SettingsSidebarTab = .general
@@ -98,6 +99,7 @@ public struct SettingsWindowView: View {
         wifiPlugin: WiFiStatusPlugin,
         bluetoothPlugin: BluetoothStatusPlugin,
         airDropPlugin: AirDropPlugin,
+        notificationPlugin: NotificationBridgePlugin,
         accessibilityManager: AccessibilityManager
     ) {
         self.coordinator = coordinator
@@ -110,6 +112,7 @@ public struct SettingsWindowView: View {
         self.wifiPlugin = wifiPlugin
         self.bluetoothPlugin = bluetoothPlugin
         self.airDropPlugin = airDropPlugin
+        self.notificationPlugin = notificationPlugin
         self.accessibilityManager = accessibilityManager
     }
 
@@ -501,6 +504,29 @@ public struct SettingsWindowView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                groupTitle("App Notifications")
+                settingsCard {
+                    settingsMasterToggleRow(
+                        icon: "bell.badge.fill",
+                        iconColor: .orange,
+                        title: "Show app notifications in Island",
+                        isOn: Binding(
+                            get: { notificationPlugin.isEnabled },
+                            set: { registry.setPluginEnabled(id: notificationPlugin.id, isEnabled: $0) }
+                        )
+                    )
+                    rowDivider
+                    settingsToggleRow(title: "Slack messages", isOn: $notificationPlugin.slackEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Microsoft Teams messages and calls", isOn: $notificationPlugin.teamsEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Outlook emails", isOn: $notificationPlugin.outlookEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Other apps (generic)", isOn: $notificationPlugin.otherAppsEnabled)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Preview")
                 HStack(spacing: 10) {
                     simButton(title: "Test Charging (78%)", icon: "bolt.batteryblock.fill") {
@@ -607,6 +633,18 @@ public struct SettingsWindowView: View {
                     }
                     simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
                         airDropPlugin.simulateIncomingLinkRequest()
+                    }
+                    simButton(title: "Simulate Slack Message", icon: "number") {
+                        notificationPlugin.simulateSlackMessage()
+                    }
+                    simButton(title: "Simulate Teams Call", icon: "phone.fill") {
+                        notificationPlugin.simulateTeamsCall()
+                    }
+                    simButton(title: "Simulate Outlook Email", icon: "envelope.fill") {
+                        notificationPlugin.simulateOutlookEmail()
+                    }
+                    simButton(title: "Dump Notification Tree", icon: "doc.text.magnifyingglass") {
+                        notificationPlugin.revealAccessibilityTreeDump()
                     }
                 }
             }
