@@ -42,42 +42,125 @@ public enum NowPlayingAuxiliaryAction: String, CaseIterable, Identifiable, Senda
     }
 }
 
-/// Animated multi-bar equalizer visualizer matching the right-side waveform in Alcove
+public enum WaveformIntensity: String, CaseIterable, Identifiable, Sendable {
+    case calm
+    case medium
+    case intense
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .calm: return "Calm"
+        case .medium: return "Medium"
+        case .intense: return "Intense"
+        }
+    }
+    public var symbolName: String {
+        switch self {
+        case .calm: return "water.waves"
+        case .medium: return "waveform"
+        case .intense: return "bolt.fill"
+        }
+    }
+}
+
+/// Animated multi-bar equalizer visualizer matching the right-side waveform in Alcove,
+/// driven by native spring physics with configurable intensity dynamics (Calm, Medium, Intense).
 public struct AudioWaveformView: View {
     public let isPlaying: Bool
     public let tintColor: Color
+    public let intensity: WaveformIntensity
 
     private let barCount = 5
-    private let frequencies: [Double] = [3.4, 4.8, 2.9, 5.3, 3.9]
-    private let phases: [Double] = [0.0, 1.1, 2.3, 0.7, 1.8]
+    private let barSpeeds: [Double] = [1.0, 0.95, 1.05, 0.92, 1.02]
 
-    public init(isPlaying: Bool, tintColor: Color) {
+    public init(
+        isPlaying: Bool,
+        tintColor: Color,
+        intensity: WaveformIntensity = .medium
+    ) {
         self.isPlaying = isPlaying
         self.tintColor = tintColor
+        self.intensity = intensity
+    }
+
+    private var phases: [[CGFloat]] {
+        switch intensity {
+        case .calm:
+            return [
+                [4.0, 7.5, 5.0, 9.0],
+                [4.5, 9.5, 6.0, 11.0],
+                [5.0, 11.5, 7.0, 12.0],
+                [4.5, 9.5, 6.0, 11.0],
+                [3.5, 7.0, 4.5, 8.5]
+            ]
+        case .medium:
+            return [
+                [4.0, 9.5, 6.0, 11.0],
+                [4.5, 13.0, 7.0, 14.5],
+                [5.0, 15.0, 8.0, 13.5],
+                [4.5, 12.5, 6.5, 14.0],
+                [3.5, 9.0, 5.0, 10.5]
+            ]
+        case .intense:
+            return [
+                [3.5, 13.5, 5.0, 12.0],
+                [4.0, 16.0, 6.5, 14.5],
+                [5.0, 16.5, 7.5, 15.0],
+                [4.0, 15.0, 6.0, 13.5],
+                [3.5, 12.0, 4.5, 10.5]
+            ]
+        }
+    }
+
+    private var springResponse: Double {
+        switch intensity {
+        case .calm: return 0.60
+        case .medium: return 0.46
+        case .intense: return 0.28
+        }
+    }
+
+    private var dampingFraction: Double {
+        switch intensity {
+        case .calm: return 0.95
+        case .medium: return 0.88
+        case .intense: return 0.72
+        }
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2.5) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    let height = barHeight(for: index, time: t)
-                    Capsule(style: .continuous)
-                        .fill(tintColor)
-                        .frame(width: 2.3, height: height)
-                        .animation(.easeInOut(duration: 0.14), value: isPlaying)
+        let activePhases = phases
+        let response = springResponse
+        let damping = dampingFraction
+
+        Group {
+            if isPlaying {
+                HStack(alignment: .center, spacing: 2.5) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        PhaseAnimator(activePhases[index]) { height in
+                            Capsule(style: .continuous)
+                                .fill(tintColor)
+                                .frame(width: 2.3, height: height)
+                        } animation: { _ in
+                            .spring(response: response * barSpeeds[index], dampingFraction: damping)
+                        }
+                        .id("\(intensity.rawValue)-\(index)")
+                    }
+                }
+                .id(intensity)
+            } else {
+                HStack(alignment: .center, spacing: 2.5) {
+                    ForEach(0..<barCount, id: \.self) { _ in
+                        Capsule(style: .continuous)
+                            .fill(tintColor.opacity(0.6))
+                            .frame(width: 2.3, height: 3.5)
+                    }
                 }
             }
         }
         .frame(height: 16)
-    }
-
-    private func barHeight(for index: Int, time: TimeInterval) -> CGFloat {
-        guard isPlaying else { return 3.5 }
-        let wave = (sin(time * frequencies[index] + phases[index]) + 1.0) * 0.5
-        let minHeight: CGFloat = 3.5
-        let maxHeight: CGFloat = index == 2 ? 15.0 : (index % 2 == 1 ? 13.0 : 10.5)
-        return minHeight + CGFloat(wave) * (maxHeight - minHeight)
+        .animation(.spring(response: 0.32, dampingFraction: 0.8), value: isPlaying)
     }
 }
 
@@ -133,15 +216,18 @@ public struct NowPlayingExpandedCardView: View {
     @ObservedObject public var mediaService: MediaRemoteStreamService
     public var themeStyle: NowPlayingThemeStyle
     public var auxiliaryAction: NowPlayingAuxiliaryAction
+    public var waveformIntensity: WaveformIntensity
 
     public init(
         mediaService: MediaRemoteStreamService,
         themeStyle: NowPlayingThemeStyle = .colored,
-        auxiliaryAction: NowPlayingAuxiliaryAction = .shuffle
+        auxiliaryAction: NowPlayingAuxiliaryAction = .shuffle,
+        waveformIntensity: WaveformIntensity = .medium
     ) {
         self.mediaService = mediaService
         self.themeStyle = themeStyle
         self.auxiliaryAction = auxiliaryAction
+        self.waveformIntensity = waveformIntensity
     }
 
     public var body: some View {
@@ -180,8 +266,10 @@ public struct NowPlayingExpandedCardView: View {
 
                 AudioWaveformView(
                     isPlaying: track.isPlaying,
-                    tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor
+                    tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor,
+                    intensity: waveformIntensity
                 )
+                .id("expanded-waveform-\(waveformIntensity.rawValue)")
                 .padding(.trailing, 4)
             }
 
@@ -477,6 +565,13 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             syncTrackWithCoordinator(mediaService.currentTrack)
         }
     }
+    @Published public var waveformIntensity: WaveformIntensity {
+        didSet {
+            guard oldValue != waveformIntensity else { return }
+            UserDefaults.standard.set(waveformIntensity.rawValue, forKey: "island.nowplaying.waveformIntensity")
+            syncTrackWithCoordinator(mediaService.currentTrack)
+        }
+    }
     @Published public var showTrackInfoOnChange: Bool {
         didSet {
             UserDefaults.standard.set(showTrackInfoOnChange, forKey: "island.nowplaying.showTrackInfoOnChange")
@@ -510,6 +605,8 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         self.disableCompactWaveform = UserDefaults.standard.object(forKey: "island.nowplaying.disableWaveform") as? Bool ?? false
         self.hideWhileSourceAppActive = UserDefaults.standard.object(forKey: "island.nowplaying.hideSourceActive") as? Bool ?? false
         self.auxiliaryAction = NowPlayingAuxiliaryAction(rawValue: UserDefaults.standard.string(forKey: "island.nowplaying.auxAction") ?? "") ?? .shuffle
+        let savedIntensity = UserDefaults.standard.string(forKey: "island.nowplaying.waveformIntensity") ?? ""
+        self.waveformIntensity = WaveformIntensity(rawValue: savedIntensity) ?? .medium
         let savedShowTrackInfo = UserDefaults.standard.object(forKey: "island.nowplaying.showTrackInfoOnChange") as? Bool ?? true
         self.showTrackInfoOnChange = savedShowTrackInfo
         let savedDuration = UserDefaults.standard.object(forKey: "island.nowplaying.trackInfoDuration") as? Double ?? 2.5
@@ -646,8 +743,10 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
                 if !disableCompactWaveform {
                     AudioWaveformView(
                         isPlaying: track.isPlaying,
-                        tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor
+                        tintColor: themeStyle == .monochrome ? .white.opacity(0.85) : track.dominantColor,
+                        intensity: waveformIntensity
                     )
+                    .id("compact-waveform-\(waveformIntensity.rawValue)")
                 }
             }
         )
@@ -656,7 +755,8 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             NowPlayingExpandedCardView(
                 mediaService: mediaService,
                 themeStyle: themeStyle,
-                auxiliaryAction: auxiliaryAction
+                auxiliaryAction: auxiliaryAction,
+                waveformIntensity: waveformIntensity
             )
         )
 

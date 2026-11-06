@@ -399,6 +399,20 @@ struct IslandTestsRunner {
             let plugin = NowPlayingPlugin()
             check(plugin.showTrackInfoOnChange == true, "showTrackInfoOnChange should default to true")
             check(plugin.trackInfoDisplayDuration == 2.5, "trackInfoDisplayDuration should default to 2.5 seconds")
+            check(plugin.waveformIntensity == .medium, "waveformIntensity should default to .medium")
+
+            plugin.waveformIntensity = .calm
+            check(plugin.waveformIntensity == .calm, "waveformIntensity update to .calm")
+            plugin.waveformIntensity = .intense
+            check(plugin.waveformIntensity == .intense, "waveformIntensity update to .intense")
+
+            // Verify AudioWaveformView initializes across all intensities playing and paused
+            for intensity in WaveformIntensity.allCases {
+                let wavePlaying = AudioWaveformView(isPlaying: true, tintColor: .accentColor, intensity: intensity)
+                _ = wavePlaying.body
+                let wavePaused = AudioWaveformView(isPlaying: false, tintColor: .accentColor, intensity: intensity)
+                _ = wavePaused.body
+            }
 
             plugin.trackInfoDisplayDuration = 4.5
             check(plugin.trackInfoDisplayDuration == 4.5, "trackInfoDisplayDuration update")

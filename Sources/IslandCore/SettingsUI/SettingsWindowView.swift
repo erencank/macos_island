@@ -907,6 +907,28 @@ public struct SettingsWindowView: View {
                     title: "Disable compact waveform",
                     isOn: $nowPlayingPlugin.disableCompactWaveform
                 )
+                if !nowPlayingPlugin.disableCompactWaveform {
+                    rowDivider
+                    HStack(spacing: 12) {
+                        ForEach(WaveformIntensity.allCases) { intensity in
+                            selectionTile(
+                                title: intensity.title,
+                                isSelected: nowPlayingPlugin.waveformIntensity == intensity
+                            ) {
+                                nowPlayingPlugin.waveformIntensity = intensity
+                            } content: {
+                                Image(systemName: intensity.symbolName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(
+                                        nowPlayingPlugin.waveformIntensity == intensity
+                                            ? SettingsTheme.accentTeal
+                                            : .white.opacity(0.65)
+                                    )
+                            }
+                        }
+                    }
+                    .padding(14)
+                }
                 rowDivider
                 settingsToggleRow(
                     title: "Hide while source app is active",
