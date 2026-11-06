@@ -9,6 +9,7 @@ public final class NotificationBannerScanner {
 
     private static let notificationCenterBundleID = "com.apple.notificationcenterui"
     private static let bannerSubroles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
+    private static let widgetGridRole = "AXOpaqueProviderGroup"
     private static let observedNotifications = [
         kAXWindowCreatedNotification,
         kAXCreatedNotification,
@@ -59,7 +60,7 @@ public final class NotificationBannerScanner {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         var banners: [RawBanner] = []
-        Self.collectBanners(from: appElement, enclosingWindow: nil, depth: 0, into: &banners)
+        Self.collectBanners(from: appElement, depth: 0, into: &banners)
 
         let keys = banners.map(\.key)
         guard keys != lastKeys else { return }
@@ -114,9 +115,13 @@ public final class NotificationBannerScanner {
         NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == notificationCenterBundleID }
     }
 
+    /// The tray's scroll area also hosts the widget grid; the live banner's scroll area holds only the banner.
+    private static func isTray(_ scrollArea: AXUIElement) -> Bool {
+        children(of: scrollArea).contains { string($0, kAXRoleAttribute) == widgetGridRole }
+    }
+
     private static func collectBanners(
         from element: AXUIElement,
-        enclosingWindow: AXUIElement?,
         depth: Int,
         into banners: inout [RawBanner]
     ) {
@@ -125,7 +130,7 @@ public final class NotificationBannerScanner {
         // Notification Center exposes the frontmost app's entire menu bar; walking it takes seconds.
         let role = string(element, kAXRoleAttribute)
         if role == kAXMenuBarRole { return }
-        let currentWindow = role == kAXWindowRole ? element : enclosingWindow
+        if role == kAXScrollAreaRole, isTray(element) { return }
 
         if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
             var texts: [String] = []
@@ -143,7 +148,7 @@ public final class NotificationBannerScanner {
         }
 
         for child in children(of: element) {
-            collectBanners(from: child, enclosingWindow: currentWindow, depth: depth + 1, into: &banners)
+            collectBanners(from: child, depth: depth + 1, into: &banners)
         }
     }
 
