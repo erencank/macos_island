@@ -45,20 +45,39 @@ public struct IslandNotification: Equatable, Sendable {
     public let appName: String
     public let kind: IslandNotificationKind
     public let sender: String
+    public let title: String?
     public let channel: String?
     public let body: String
 
-    public init(appName: String, kind: IslandNotificationKind, sender: String, channel: String?, body: String) {
+    public init(
+        appName: String,
+        kind: IslandNotificationKind,
+        sender: String,
+        title: String? = nil,
+        channel: String? = nil,
+        body: String
+    ) {
         self.appName = appName
         self.kind = kind
         self.sender = sender
+        self.title = title
         self.channel = channel
         self.body = body
     }
 
-    /// Text shown in the right wing, e.g. `Alice · #general`.
     public var headline: String {
         guard let channel, !channel.isEmpty else { return sender }
         return sender.isEmpty ? channel : "\(sender) · \(channel)"
+    }
+
+    public var subtext: String? {
+        if kind == .email {
+            if let title, !title.isEmpty { return title }
+            let firstLine = body.split(separator: "\n", maxSplits: 1).first.map(String.init)
+            return firstLine?.isEmpty == false ? firstLine : nil
+        }
+        if kind == .incomingCall { return nil }
+        let firstLine = body.split(separator: "\n", maxSplits: 1).first.map(String.init)
+        return firstLine?.isEmpty == false ? firstLine : nil
     }
 }

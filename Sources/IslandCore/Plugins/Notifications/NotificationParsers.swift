@@ -44,6 +44,41 @@ public struct SlackNotificationParser: AppNotificationParser {
         let content = BannerTextCleaner.contentTexts(of: banner, appName: appName)
         guard let first = content.first else { return nil }
 
+        if content.count >= 3 {
+            let target = content[1]
+            let rawMessage = content[content.count - 1]
+
+            var sender = ""
+            var body = rawMessage
+
+            if let colonIndex = rawMessage.firstIndex(of: ":") {
+                let candidateSender = String(rawMessage[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+                let candidateBody = String(rawMessage[rawMessage.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                if !candidateSender.isEmpty, candidateSender.count <= 40, !candidateSender.contains("\n") {
+                    sender = candidateSender
+                    body = candidateBody
+                }
+            }
+
+            var channel: String?
+            if sender.isEmpty {
+                sender = target
+                channel = nil
+            } else if target.caseInsensitiveCompare(sender) == .orderedSame {
+                channel = nil
+            } else {
+                channel = target.hasPrefix("#") ? target : (target.contains(",") ? target : "#\(target)")
+            }
+
+            return IslandNotification(
+                appName: appName,
+                kind: .message,
+                sender: sender,
+                channel: channel,
+                body: body
+            )
+        }
+
         let body = content.count > 1 ? content[content.count - 1] : ""
         var title = first
         var channel: String?
@@ -75,7 +110,6 @@ public struct SlackNotificationParser: AppNotificationParser {
     }
 
     private enum channelPattern {
-        /// Handles `Alice (#general)`, `Alice in #general` and a bare `#general`.
         static func firstMatch(in title: String) -> (channel: String, remainder: String)? {
             let pattern = #"^(.*?)\s*(?:\(|\bin\s+)?(#[^\s)]+)\)?$"#
             guard let regex = try? NSRegularExpression(pattern: pattern),
@@ -151,8 +185,17 @@ public struct OutlookNotificationParser: AppNotificationParser {
         }
 
         let subject = content[0]
-        let body = content.count > 2 ? "\(subject)\n\(content[content.count - 1])" : subject
-        return IslandNotification(appName: appName, kind: .email, sender: content[1], channel: nil, body: body)
+        let sender = content[1]
+        let preview = content.count > 2 ? content[content.count - 1] : ""
+        let body = preview.isEmpty ? subject : "\(subject)\n\(preview)"
+        return IslandNotification(
+            appName: appName,
+            kind: .email,
+            sender: sender,
+            title: subject,
+            channel: nil,
+            body: body
+        )
     }
 }
 

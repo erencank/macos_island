@@ -45,11 +45,27 @@ public struct NotificationCompactTrailingView: View {
                 .foregroundColor(.green)
                 .symbolEffect(.pulse)
         case .message, .email:
-            Text(notification.headline)
-                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if let subtext = notification.subtext, !subtext.isEmpty {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(notification.headline)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Text(subtext)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            } else {
+                Text(notification.headline)
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
     }
 }
@@ -93,14 +109,18 @@ public struct NotificationExpandedCardView: View {
 
     @ViewBuilder
     private var bodyText: some View {
-        let lines = notification.body.split(separator: "\n", maxSplits: 1).map(String.init)
-        if notification.kind == .email, let subject = lines.first {
-            Text(subject)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundColor(.white.opacity(0.9))
-                .lineLimit(1)
-            if lines.count > 1 {
-                Text(lines[1])
+        if notification.kind == .email {
+            if let subject = notification.title ?? notification.body.split(separator: "\n", maxSplits: 1).first.map(String.init), !subject.isEmpty {
+                Text(subject)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(1)
+            }
+            let preview = notification.title != nil
+                ? notification.body
+                : (notification.body.split(separator: "\n", maxSplits: 1).dropFirst().first.map(String.init) ?? "")
+            if !preview.isEmpty {
+                Text(preview)
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.white.opacity(0.6))
                     .lineLimit(2)

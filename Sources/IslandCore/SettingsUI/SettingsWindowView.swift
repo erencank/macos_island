@@ -653,6 +653,17 @@ public struct SettingsWindowView: View {
                     settingsToggleRow(title: "Hide system banner for Outlook", isOn: $notificationPlugin.hideOutlookBanner)
                     rowDivider
                     settingsToggleRow(title: "Other apps (generic)", isOn: $notificationPlugin.otherAppsEnabled)
+                    rowDivider
+                    settingsSliderRow(
+                        title: "Maximum notification width",
+                        badgeText: "\(Int(notificationPlugin.maxWingWidth)) px",
+                        value: $notificationPlugin.maxWingWidth,
+                        range: 120...280,
+                        step: 5,
+                        onEditingChanged: { editing in
+                            notificationPlugin.triggerWidthPreview(isEditing: editing)
+                        }
+                    )
                 }
             }
 

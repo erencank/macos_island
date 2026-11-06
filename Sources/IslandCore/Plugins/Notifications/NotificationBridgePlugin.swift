@@ -34,6 +34,15 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     @Published public var messageDuration: Double {
         didSet { UserDefaults.standard.set(messageDuration, forKey: Self.durationKey) }
     }
+    @Published public var maxWingWidth: Double {
+        didSet {
+            UserDefaults.standard.set(maxWingWidth, forKey: Self.maxWingWidthKey)
+            if isCalibratingWidth {
+                presentWidthCalibrationPreview()
+            }
+        }
+    }
+    @Published public private(set) var isCalibratingWidth: Bool = false
 
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
@@ -43,6 +52,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let hideOutlookKey = "island.notifications.hideBanner.outlook"
     private static let otherAppsKey = "island.notifications.otherApps"
     private static let durationKey = "island.notifications.messageDuration"
+    private static let maxWingWidthKey = "island.notifications.maxWingWidth"
     private static let hoverExitDismissDelay: TimeInterval = 1.5
     private static let ignoredAppNames: Set<String> = ["airdrop", "island"]
 
@@ -58,6 +68,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private var presentedKeys = Set<String>()
     private var active: ActiveNotification?
     private var dismissTask: Task<Void, Never>?
+    private var widthCalibrationDismissTask: Task<Void, Never>?
     private var hoverCancellable: AnyCancellable?
 
     public init() {
@@ -71,6 +82,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         hideOutlookBanner = defaults.object(forKey: Self.hideOutlookKey) as? Bool ?? false
         otherAppsEnabled = defaults.object(forKey: Self.otherAppsKey) as? Bool ?? false
         messageDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
+        maxWingWidth = defaults.object(forKey: Self.maxWingWidthKey) as? Double ?? 185.0
 
         scanner.onBannersChanged = { [weak self] banners in
             self?.handle(banners: banners)
@@ -161,7 +173,12 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
     // MARK: - Presentation
 
-    private func present(_ notification: IslandNotification, banner: RawBanner?, payloadID: String) {
+    private func present(
+        _ notification: IslandNotification,
+        banner: RawBanner?,
+        payloadID: String,
+        forcedRightWingWidth: CGFloat? = nil
+    ) {
         guard isEnabled, let coordinator else { return }
         if active?.notification.kind == .incomingCall, notification.kind != .incomingCall { return }
 
@@ -169,12 +186,13 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         active = ActiveNotification(payloadID: payloadID, notification: notification, banner: banner)
 
         let isCall = notification.kind == .incomingCall
+        let rightWidth = forcedRightWingWidth ?? (isCall ? 44 : Self.messageWingWidth(for: notification, maxAllowedWidth: maxWingWidth))
         let payload = NotchActivityPayload(
             id: payloadID,
             pluginID: id,
             priority: isCall ? .critical : .high,
             posture: .compactWings,
-            wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: isCall ? 44 : Self.messageWingWidth(for: notification)),
+            wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: rightWidth),
             compactLeadingView: AnyView(NotificationCompactLeadingView(notification: notification)),
             compactTrailingView: AnyView(NotificationCompactTrailingView(notification: notification)),
             expandedView: AnyView(NotificationExpandedCardView(plugin: self, notification: notification)),
@@ -187,9 +205,47 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         }
     }
 
-    private static func messageWingWidth(for notification: IslandNotification) -> CGFloat {
-        let estimated = CGFloat(notification.headline.count) * 6.6 + 16
-        return min(max(estimated, 56), 150)
+    public static func messageWingWidth(for notification: IslandNotification, maxAllowedWidth: Double = 185.0) -> CGFloat {
+        let headlineFont = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let headlineWidth = (notification.headline as NSString).size(withAttributes: [.font: headlineFont]).width
+
+        if let subtext = notification.subtext, !subtext.isEmpty {
+            let subtextFont = NSFont.systemFont(ofSize: 9.5, weight: .medium)
+            let subtextWidth = (subtext as NSString).size(withAttributes: [.font: subtextFont]).width
+            let maxTextWidth = max(headlineWidth, subtextWidth)
+            let needed = maxTextWidth + 18
+            return max(70, min(CGFloat(maxAllowedWidth), ceil(needed)))
+        } else {
+            let needed = headlineWidth + 18
+            return max(56, min(CGFloat(maxAllowedWidth), ceil(needed)))
+        }
+    }
+
+    public func triggerWidthPreview(isEditing: Bool) {
+        widthCalibrationDismissTask?.cancel()
+        if isEditing {
+            isCalibratingWidth = true
+            presentWidthCalibrationPreview()
+        } else {
+            isCalibratingWidth = false
+            widthCalibrationDismissTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.dismissCurrent()
+            }
+        }
+    }
+
+    private func presentWidthCalibrationPreview() {
+        let widthVal = Int(maxWingWidth.rounded())
+        let sample = IslandNotification(
+            appName: "Slack",
+            kind: .message,
+            sender: "Alex Rivera",
+            channel: "#acme-team-25",
+            body: "Width limit: \(widthVal) px"
+        )
+        present(sample, banner: nil, payloadID: "width-calibration-\(widthVal)", forcedRightWingWidth: CGFloat(maxWingWidth))
     }
 
     private func scheduleDismiss(after delay: TimeInterval) {
@@ -227,6 +283,8 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
     public func dismissCurrent() {
         dismissTask?.cancel()
+        widthCalibrationDismissTask?.cancel()
+        isCalibratingWidth = false
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: true)
     }
@@ -253,15 +311,23 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
     public func simulateSlackMessage() {
         let notification = IslandNotification(
-            appName: "Slack", kind: .message, sender: "Alice", channel: "#general", body: "Standup moved to 10:30"
+            appName: "Slack",
+            kind: .message,
+            sender: "Alex Rivera",
+            channel: "#acme-team-25",
+            body: "Hey team, the latest update is ready for review."
         )
         present(notification, banner: nil, payloadID: "simulated-slack-\(UUID().uuidString)")
     }
 
     public func simulateOutlookEmail() {
         let notification = IslandNotification(
-            appName: "Microsoft Outlook", kind: .email, sender: "Dana Lee",
-            channel: nil, body: "Q4 planning notes\nAttached are the notes from today's session."
+            appName: "Microsoft Outlook",
+            kind: .email,
+            sender: "Sarah Connor",
+            title: "Project roadmap review",
+            channel: nil,
+            body: "Attached is the latest roadmap update for this quarter."
         )
         present(notification, banner: nil, payloadID: "simulated-outlook-\(UUID().uuidString)")
     }
