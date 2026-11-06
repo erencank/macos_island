@@ -304,6 +304,7 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
                        let val = posRef {
                         var pt = CGPoint.zero
                         if AXValueGetValue(val as! AXValue, .cgPoint, &pt), pt.x >= 8000,
+                           !NotificationWindowHider.shared.owns(win),
                            let posVal = AXValueCreate(.cgPoint, &orig) {
                             AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, posVal)
                         }

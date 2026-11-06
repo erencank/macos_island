@@ -39,6 +39,7 @@ public final class NotificationBannerScanner {
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         removeObserver()
+        NotificationWindowHider.shared.restoreIfNeeded()
         lastKeys = []
     }
 
@@ -58,7 +59,9 @@ public final class NotificationBannerScanner {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         var banners: [RawBanner] = []
-        Self.collectBanners(from: appElement, depth: 0, into: &banners)
+        Self.collectBanners(from: appElement, enclosingWindow: nil, depth: 0, into: &banners)
+
+        if banners.isEmpty { NotificationWindowHider.shared.restoreIfNeeded() }
 
         let keys = banners.map(\.key)
         guard keys != lastKeys else { return }
@@ -113,24 +116,36 @@ public final class NotificationBannerScanner {
         NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == notificationCenterBundleID }
     }
 
-    private static func collectBanners(from element: AXUIElement, depth: Int, into banners: inout [RawBanner]) {
+    private static func collectBanners(
+        from element: AXUIElement,
+        enclosingWindow: AXUIElement?,
+        depth: Int,
+        into banners: inout [RawBanner]
+    ) {
         guard depth <= maxTreeDepth else { return }
 
         // Notification Center exposes the frontmost app's entire menu bar; walking it takes seconds.
-        if string(element, kAXRoleAttribute) == kAXMenuBarRole { return }
+        let role = string(element, kAXRoleAttribute)
+        if role == kAXMenuBarRole { return }
+        let currentWindow = role == kAXWindowRole ? element : enclosingWindow
 
         if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
             banners.append(
-                RawBanner(texts: texts, buttons: buttons, pressBanner: { press(element) })
+                RawBanner(
+                    texts: texts,
+                    buttons: buttons,
+                    pressBanner: { press(element) },
+                    hideBanner: { hide(banner: element, in: currentWindow) }
+                )
             )
             return
         }
 
         for child in children(of: element) {
-            collectBanners(from: child, depth: depth + 1, into: &banners)
+            collectBanners(from: child, enclosingWindow: currentWindow, depth: depth + 1, into: &banners)
         }
     }
 
@@ -195,6 +210,15 @@ public final class NotificationBannerScanner {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
         return ref as? String
+    }
+
+    /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.
+    private static func hide(banner: AXUIElement, in window: AXUIElement?) {
+        guard let window else {
+            IslandLogger.system.error("Notification banner has no enclosing window to hide")
+            return
+        }
+        MainActor.assumeIsolated { NotificationWindowHider.shared.hide(window) }
     }
 
     private static func press(_ element: AXUIElement) -> Bool {

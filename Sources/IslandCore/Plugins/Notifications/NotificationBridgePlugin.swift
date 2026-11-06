@@ -19,6 +19,15 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     @Published public var outlookEnabled: Bool {
         didSet { UserDefaults.standard.set(outlookEnabled, forKey: Self.outlookKey) }
     }
+    @Published public var hideSlackBanner: Bool {
+        didSet { UserDefaults.standard.set(hideSlackBanner, forKey: Self.hideSlackKey) }
+    }
+    @Published public var hideTeamsBanner: Bool {
+        didSet { UserDefaults.standard.set(hideTeamsBanner, forKey: Self.hideTeamsKey) }
+    }
+    @Published public var hideOutlookBanner: Bool {
+        didSet { UserDefaults.standard.set(hideOutlookBanner, forKey: Self.hideOutlookKey) }
+    }
     @Published public var otherAppsEnabled: Bool {
         didSet { UserDefaults.standard.set(otherAppsEnabled, forKey: Self.otherAppsKey) }
     }
@@ -29,6 +38,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
     private static let outlookKey = "island.notifications.outlook"
+    private static let hideSlackKey = "island.notifications.hideBanner.slack"
+    private static let hideTeamsKey = "island.notifications.hideBanner.teams"
+    private static let hideOutlookKey = "island.notifications.hideBanner.outlook"
     private static let otherAppsKey = "island.notifications.otherApps"
     private static let durationKey = "island.notifications.messageDuration"
     private static let hoverExitDismissDelay: TimeInterval = 1.5
@@ -54,6 +66,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         slackEnabled = defaults.object(forKey: Self.slackKey) as? Bool ?? true
         teamsEnabled = defaults.object(forKey: Self.teamsKey) as? Bool ?? true
         outlookEnabled = defaults.object(forKey: Self.outlookKey) as? Bool ?? true
+        hideSlackBanner = defaults.object(forKey: Self.hideSlackKey) as? Bool ?? false
+        hideTeamsBanner = defaults.object(forKey: Self.hideTeamsKey) as? Bool ?? false
+        hideOutlookBanner = defaults.object(forKey: Self.hideOutlookKey) as? Bool ?? false
         otherAppsEnabled = defaults.object(forKey: Self.otherAppsKey) as? Bool ?? false
         messageDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
 
@@ -104,6 +119,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         for banner in banners where !presentedKeys.contains(banner.key) {
             presentedKeys.insert(banner.key)
             guard let notification = notification(for: banner) else { continue }
+            if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
             present(notification, banner: banner, payloadID: banner.key)
         }
 
@@ -123,6 +139,15 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             return nil
         }
         return generic
+    }
+
+    private func shouldHideBanner(for appName: String) -> Bool {
+        switch appName {
+        case SlackNotificationParser().appName: return hideSlackBanner
+        case TeamsNotificationParser().appName: return hideTeamsBanner
+        case OutlookNotificationParser().appName: return hideOutlookBanner
+        default: return false
+        }
     }
 
     private func isAppEnabled(_ appName: String) -> Bool {

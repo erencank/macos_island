@@ -347,6 +347,17 @@ struct IslandTestsRunner {
 
             plugin.slackEnabled = true
 
+            var hideCalls = 0
+            plugin.hideOutlookBanner = true
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "S", "Dana", "P"], hideBanner: { hideCalls += 1 })])
+            check(hideCalls == 1, "Banner should be hidden once when hide option is enabled")
+            plugin.hideOutlookBanner = false
+            plugin.handle(banners: [])
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "S", "Dana", "P"], hideBanner: { hideCalls += 1 })])
+            check(hideCalls == 1, "Banner must not be hidden when hide option is disabled")
+            plugin.dismissCurrent()
+            plugin.handle(banners: [])
+
             plugin.outlookEnabled = false
             plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
             check(coordinator.persistentActivity == nil, "Disabled Outlook should not publish")

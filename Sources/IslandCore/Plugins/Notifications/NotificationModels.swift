@@ -16,11 +16,18 @@ public struct RawBanner {
     public let texts: [String]
     public let buttons: [BannerButton]
     public let pressBanner: () -> Bool
+    public let hideBanner: () -> Void
 
-    public init(texts: [String], buttons: [BannerButton] = [], pressBanner: @escaping () -> Bool = { false }) {
+    public init(
+        texts: [String],
+        buttons: [BannerButton] = [],
+        pressBanner: @escaping () -> Bool = { false },
+        hideBanner: @escaping () -> Void = {}
+    ) {
         self.texts = texts
         self.buttons = buttons
         self.pressBanner = pressBanner
+        self.hideBanner = hideBanner
     }
 
     /// Stable identity used to tell a new banner from one that was already presented.

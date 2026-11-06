@@ -5,6 +5,7 @@ public enum SettingsSidebarTab: String, CaseIterable, Identifiable {
     case general
     case battery
     case connectivity
+    case appNotifications
     case display
     case sound
     case nowPlaying
@@ -19,6 +20,7 @@ public enum SettingsSidebarTab: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .battery: return "Battery"
         case .connectivity: return "Connectivity"
+        case .appNotifications: return "Apps"
         case .display: return "Display"
         case .sound: return "Sound"
         case .nowPlaying: return "Now Playing"
@@ -33,6 +35,7 @@ public enum SettingsSidebarTab: String, CaseIterable, Identifiable {
         case .general: return "gearshape.fill"
         case .battery: return "bolt.fill"
         case .connectivity: return "headphones"
+        case .appNotifications: return "bell.badge.fill"
         case .display: return "sun.max.fill"
         case .sound: return "speaker.wave.2.fill"
         case .nowPlaying: return "play.fill"
@@ -47,6 +50,7 @@ public enum SettingsSidebarTab: String, CaseIterable, Identifiable {
         case .general: return Color(white: 0.42)
         case .battery: return Color(red: 0.96, green: 0.54, blue: 0.30)
         case .connectivity: return Color(red: 0.16, green: 0.80, blue: 0.56)
+        case .appNotifications: return Color(red: 0.26, green: 0.52, blue: 0.96)
         case .display: return Color(red: 0.56, green: 0.34, blue: 0.94)
         case .sound: return Color(red: 0.92, green: 0.30, blue: 0.84)
         case .nowPlaying: return Color(red: 0.95, green: 0.32, blue: 0.40)
@@ -161,6 +165,7 @@ public struct SettingsWindowView: View {
             sidebarSectionHeader("Notifications")
             sidebarRow(.battery)
             sidebarRow(.connectivity)
+            sidebarRow(.appNotifications)
             sidebarRow(.display)
             sidebarRow(.sound)
 
@@ -251,6 +256,8 @@ public struct SettingsWindowView: View {
             batteryPane
         case .connectivity:
             connectivityPane
+        case .appNotifications:
+            appNotificationsPane
         case .display:
             displayPane
         case .sound:
@@ -504,29 +511,6 @@ public struct SettingsWindowView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                groupTitle("App Notifications")
-                settingsCard {
-                    settingsMasterToggleRow(
-                        icon: "bell.badge.fill",
-                        iconColor: .orange,
-                        title: "Show app notifications in Island",
-                        isOn: Binding(
-                            get: { notificationPlugin.isEnabled },
-                            set: { registry.setPluginEnabled(id: notificationPlugin.id, isEnabled: $0) }
-                        )
-                    )
-                    rowDivider
-                    settingsToggleRow(title: "Slack messages", isOn: $notificationPlugin.slackEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Microsoft Teams messages and calls", isOn: $notificationPlugin.teamsEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Outlook emails", isOn: $notificationPlugin.outlookEnabled)
-                    rowDivider
-                    settingsToggleRow(title: "Other apps (generic)", isOn: $notificationPlugin.otherAppsEnabled)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Preview")
                 HStack(spacing: 10) {
                     simButton(title: "Test Charging (78%)", icon: "bolt.batteryblock.fill") {
@@ -634,6 +618,47 @@ public struct SettingsWindowView: View {
                     simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
                         airDropPlugin.simulateIncomingLinkRequest()
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - App Notifications Pane
+
+    private var appNotificationsPane: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("App Notifications")
+                settingsCard {
+                    settingsMasterToggleRow(
+                        icon: "bell.badge.fill",
+                        iconColor: .orange,
+                        title: "Show app notifications in Island",
+                        isOn: Binding(
+                            get: { notificationPlugin.isEnabled },
+                            set: { registry.setPluginEnabled(id: notificationPlugin.id, isEnabled: $0) }
+                        )
+                    )
+                    rowDivider
+                    settingsToggleRow(title: "Slack messages", isOn: $notificationPlugin.slackEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner for Slack", isOn: $notificationPlugin.hideSlackBanner)
+                    rowDivider
+                    settingsToggleRow(title: "Microsoft Teams messages and calls", isOn: $notificationPlugin.teamsEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner for Teams", isOn: $notificationPlugin.hideTeamsBanner)
+                    rowDivider
+                    settingsToggleRow(title: "Outlook emails", isOn: $notificationPlugin.outlookEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner for Outlook", isOn: $notificationPlugin.hideOutlookBanner)
+                    rowDivider
+                    settingsToggleRow(title: "Other apps (generic)", isOn: $notificationPlugin.otherAppsEnabled)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                groupTitle("Preview")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     simButton(title: "Simulate Slack Message", icon: "number") {
                         notificationPlugin.simulateSlackMessage()
                     }
