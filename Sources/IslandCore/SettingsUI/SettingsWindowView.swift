@@ -913,6 +913,21 @@ public struct SettingsWindowView: View {
                     isOn: $nowPlayingPlugin.hideWhileSourceAppActive
                 )
                 rowDivider
+                settingsToggleRow(
+                    title: "Show track title and artist on change",
+                    isOn: $nowPlayingPlugin.showTrackInfoOnChange
+                )
+                if nowPlayingPlugin.showTrackInfoOnChange {
+                    rowDivider
+                    settingsSliderRow(
+                        title: "Track info duration",
+                        badgeText: String(format: "%.1f s", nowPlayingPlugin.trackInfoDisplayDuration),
+                        value: $nowPlayingPlugin.trackInfoDisplayDuration,
+                        range: 1.0...6.0,
+                        step: 0.5
+                    )
+                }
+                rowDivider
 
                 // Auxiliary Button Selector (Favorite / Shuffle / Repeat / Copy)
                 HStack(spacing: 10) {
@@ -938,12 +953,22 @@ public struct SettingsWindowView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Preview")
-                HStack(spacing: 10) {
-                    simButton(title: "Simulate 'blue jean' Track", icon: "music.note") {
-                        nowPlayingPlugin.simulateTrack()
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        simButton(title: "Simulate Track", icon: "music.note") {
+                            nowPlayingPlugin.simulateTrack()
+                        }
+                        simButton(title: "Clear Track", icon: "xmark.circle") {
+                            nowPlayingPlugin.clearSimulatedTrack()
+                        }
                     }
-                    simButton(title: "Clear Simulated Track", icon: "xmark.circle") {
-                        nowPlayingPlugin.clearSimulatedTrack()
+                    HStack(spacing: 10) {
+                        simButton(title: "Simulate Next Track", icon: "forward.fill") {
+                            nowPlayingPlugin.simulateNextTrack()
+                        }
+                        simButton(title: "Simulate Prev Track", icon: "backward.fill") {
+                            nowPlayingPlugin.simulatePreviousTrack()
+                        }
                     }
                 }
             }

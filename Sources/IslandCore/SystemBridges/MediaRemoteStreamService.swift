@@ -17,6 +17,7 @@ public enum MediaPlaybackCommand: Int32 {
 @MainActor
 public final class MediaRemoteStreamService: ObservableObject {
     @Published public private(set) var currentTrack: NowPlayingTrack?
+    @Published public private(set) var latestTrackChange: TrackChangeEvent?
 
     private var pollTimer: Timer?
     private var progressTickTimer: Timer?
@@ -26,6 +27,8 @@ public final class MediaRemoteStreamService: ObservableObject {
     private var isSimulatedTrackActive: Bool = false
     /// Prevents a poll during the first 1.2s after a user clicks Play/Pause from overwriting the optimistic toggle
     private var lastUserCommandTimestamp: Date = .distantPast
+    private var lastNavCommand: MediaPlaybackCommand?
+    private var lastNavCommandTimestamp: Date = .distantPast
 
     public init() {}
 
@@ -57,13 +60,32 @@ public final class MediaRemoteStreamService: ObservableObject {
         progressTickTimer = nil
     }
 
-    public func setSimulatedTrack(_ track: NowPlayingTrack?) {
+    public func setSimulatedTrack(_ track: NowPlayingTrack?, direction: TrackChangeDirection? = nil) {
+        let prev = currentTrack
         isSimulatedTrackActive = (track != nil)
+
+        if let track {
+            if direction != nil || (prev != nil && track.trackIdentity != prev?.trackIdentity) {
+                let dir = direction ?? (lastNavCommand == .previousTrack && Date().timeIntervalSince(lastNavCommandTimestamp) < 3.0 ? .backward : .forward)
+                latestTrackChange = TrackChangeEvent(
+                    title: track.title,
+                    artist: track.artist,
+                    direction: dir
+                )
+            }
+        } else {
+            latestTrackChange = nil
+        }
+
         currentTrack = track
     }
 
     public func sendCommand(_ command: MediaPlaybackCommand) {
         lastUserCommandTimestamp = Date()
+        if command == .nextTrack || command == .previousTrack {
+            lastNavCommand = command
+            lastNavCommandTimestamp = Date()
+        }
 
         if isSimulatedTrackActive, var track = currentTrack {
             switch command {
@@ -162,11 +184,27 @@ public final class MediaRemoteStreamService: ObservableObject {
                 fetched.isPlaying = existing.isPlaying
             }
 
+            let isNewTrack = (currentTrack != nil && fetched.trackIdentity != currentTrack?.trackIdentity)
+
             if fetched.title != cachedTrackIdentifier || cachedArtworkImage == nil {
                 cachedTrackIdentifier = fetched.title
                 cachedArtworkImage = fetched.artworkImage
                 cachedDominantColor = fetched.dominantColor
             }
+            if isNewTrack {
+                let direction: TrackChangeDirection
+                if lastNavCommand == .previousTrack && Date().timeIntervalSince(lastNavCommandTimestamp) < 3.0 {
+                    direction = .backward
+                } else {
+                    direction = .forward
+                }
+                self.latestTrackChange = TrackChangeEvent(
+                    title: fetched.title,
+                    artist: fetched.artist,
+                    direction: direction
+                )
+            }
+
             self.currentTrack = fetched
         } else if currentTrack != nil && !isSimulatedTrackActive {
             self.currentTrack = nil

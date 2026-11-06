@@ -57,7 +57,7 @@ public struct NotchGeometry: Equatable, Sendable {
     /// Bounding canvas frame for the transparent borderless NSPanel in global screen coordinates.
     public let canvasWindowFrame: CGRect
 
-    public static let canvasWidth: CGFloat = 560
+    public static let canvasWidth: CGFloat = 800
     public static let canvasHeight: CGFloat = 260
     public static let fallbackPillWidth: CGFloat = 184
     public static let fallbackPillHeight: CGFloat = 32

@@ -16,6 +16,10 @@ public struct NowPlayingTrack: Equatable {
     public var artworkImage: NSImage?
     public var dominantColor: Color
 
+    public var trackIdentity: String {
+        "\(title)///\(artist)"
+    }
+
     public init(
         title: String,
         artist: String,
@@ -38,6 +42,33 @@ public struct NowPlayingTrack: Equatable {
         self.appName = appName
         self.artworkImage = artworkImage
         self.dominantColor = dominantColor
+    }
+}
+
+public enum TrackChangeDirection: String, Sendable, Equatable {
+    case forward
+    case backward
+}
+
+public struct TrackChangeEvent: Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public let title: String
+    public let artist: String
+    public let direction: TrackChangeDirection
+    public let timestamp: Date
+
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        artist: String,
+        direction: TrackChangeDirection = .forward,
+        timestamp: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.direction = direction
+        self.timestamp = timestamp
     }
 }
 
