@@ -4,9 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 DMG_STAGING="${BUILD_DIR}/dmg-staging"
-DMG_PATH="${BUILD_DIR}/Island.dmg"
 
-"${ROOT_DIR}/Scripts/build-app.sh" release
+VERSION="${1:-${APP_VERSION:-1.0.0}}"
+DMG_NAME="${2:-Island}"
+DMG_PATH="${BUILD_DIR}/${DMG_NAME}.dmg"
+
+"${ROOT_DIR}/Scripts/build-app.sh" release "${VERSION}"
 
 echo "==> Preparing DMG staging directory..."
 rm -rf "${DMG_STAGING}" "${DMG_PATH}"
@@ -21,6 +24,7 @@ hdiutil create \
     -srcfolder "${DMG_STAGING}" \
     -ov \
     -format UDZO \
+    -fs HFS+ \
     "${DMG_PATH}"
 
 rm -rf "${DMG_STAGING}"
