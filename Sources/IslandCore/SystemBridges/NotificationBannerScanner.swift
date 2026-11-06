@@ -133,6 +133,14 @@ public final class NotificationBannerScanner {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
+            let debugMsg = "[SCANNER] texts=\(texts)\n"
+            if let data = debugMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? debugMsg.write(toFile: "/tmp/island-debug.log", atomically: false, encoding: .utf8)
+            }
             banners.append(
                 RawBanner(
                     texts: texts,
@@ -211,6 +219,8 @@ public final class NotificationBannerScanner {
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
         return ref as? String
     }
+
+
 
     /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.
     private static func hide(banner: AXUIElement, in window: AXUIElement?) {

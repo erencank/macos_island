@@ -267,6 +267,19 @@ struct IslandTestsRunner {
 
         // Notification parsers
         do {
+            check(BannerTextCleaner.isTimeMarker("now"), "Time marker 'now'")
+            check(BannerTextCleaner.isTimeMarker("nu"), "Time marker 'nu'")
+            check(BannerTextCleaner.isTimeMarker("yesterday"), "Time marker 'yesterday'")
+            check(BannerTextCleaner.isTimeMarker("gisteren"), "Time marker 'gisteren'")
+            check(BannerTextCleaner.isTimeMarker("10m ago"), "Relative time marker '10m ago'")
+            check(BannerTextCleaner.isTimeMarker("10m"), "Relative time marker '10m'")
+            check(BannerTextCleaner.isTimeMarker("19m ago"), "Relative time marker '19m ago'")
+            check(BannerTextCleaner.isTimeMarker("2h ago"), "Relative time marker '2h ago'")
+            check(BannerTextCleaner.isTimeMarker("vor 10 Min"), "Relative time marker 'vor 10 Min'")
+            check(BannerTextCleaner.isTimeMarker("il y a 5 min"), "Relative time marker 'il y a 5 min'")
+            check(!BannerTextCleaner.isTimeMarker("Bob Niroomand"), "Normal name is not time marker")
+            check(!BannerTextCleaner.isTimeMarker("team-stock-allocation-engineering"), "Channel is not time marker")
+
             let parsers = NotificationParserSet()
 
             let slackChannel = RawBanner(texts: ["Slack, Alice (#general), Standup moved", "Slack", "Alice (#general)", "Standup moved", "now"])
@@ -309,7 +322,54 @@ struct IslandTestsRunner {
             ]))
             check(realOutlook?.kind == .email, "Captured real Outlook banner should parse as an email")
             check(realOutlook?.sender == "Erencan Kanmaz", "Captured Outlook banner sender is the subtitle")
+            check(realOutlook?.title == "Re: Test hello world", "Captured Outlook banner title is the subject")
+            check(realOutlook?.subtext == "Re: Test hello world", "Captured Outlook banner subtext is the subject")
             check(realOutlook?.body.hasPrefix("Re: Test hello world\n") == true, "Captured Outlook banner subject is the title")
+
+            let modernSlack = parsers.parse(RawBanner(texts: [
+                "Slack, acme, acme-team-25, Alex Rivera: Hey team the latest update is ready",
+                "acme",
+                "acme-team-25",
+                "Alex Rivera: Hey team the latest update is ready"
+            ]))
+            check(modernSlack?.appName == "Slack", "Modern Slack banner recognized")
+            check(modernSlack?.sender == "Alex Rivera", "Sender extracted from message prefix")
+            check(modernSlack?.channel == "#acme-team-25", "Channel formatted with hashtag")
+            check(modernSlack?.body == "Hey team the latest update is ready", "Message body stripped of sender prefix")
+            check(modernSlack?.headline == "Alex Rivera · #acme-team-25", "Headline contains sender and channel")
+            check(modernSlack?.subtext == "Hey team the latest update is ready", "Subtext contains message text")
+
+            let slackGroup = parsers.parse(RawBanner(texts: [
+                "Slack, acme, Alex Rivera, Jordan Lee, Alex Rivera: Looking into it now",
+                "acme",
+                "Alex Rivera, Jordan Lee",
+                "Alex Rivera: Looking into it now"
+            ]))
+            check(slackGroup?.sender == "Alex Rivera", "Group DM sender extracted")
+            check(slackGroup?.channel == "Alex Rivera, Jordan Lee", "Group DM channel preserved")
+            check(slackGroup?.body == "Looking into it now", "Group DM body extracted")
+
+            let slack1on1 = parsers.parse(RawBanner(texts: [
+                "Slack, acme, Alex Rivera, Alex Rivera: Looking into it now",
+                "acme",
+                "Alex Rivera",
+                "Alex Rivera: Looking into it now"
+            ]))
+            check(slack1on1?.sender == "Alex Rivera", "1-on-1 DM sender extracted")
+            check(slack1on1?.channel == nil, "1-on-1 DM has no channel")
+            check(slack1on1?.headline == "Alex Rivera", "Headline is sender only")
+            check(slack1on1?.subtext == "Looking into it now", "Subtext is message")
+
+            let slackDirectNoColon = parsers.parse(RawBanner(texts: [
+                "Slack, bol, Guus Eijsvogels, Hier lijkt wat mis te gaan",
+                "bol",
+                "Guus Eijsvogels",
+                "Hier lijkt wat mis te gaan"
+            ]))
+            check(slackDirectNoColon?.sender == "Guus Eijsvogels", "Direct DM sender extracted without colon")
+            check(slackDirectNoColon?.channel == nil, "Direct DM has no channel")
+            check(slackDirectNoColon?.headline == "Guus Eijsvogels", "Direct DM headline is sender only")
+            check(slackDirectNoColon?.subtext == "Hier lijkt wat mis te gaan", "Direct DM subtext is message body")
 
             check(parsers.parse(RawBanner(texts: ["Mail", "Eve", "Hello"])) == nil, "Unknown apps are not handled by app parsers")
             check(parsers.parseGeneric(RawBanner(texts: ["Mail", "Eve", "Hello"]))?.appName == "Mail", "Generic parser should use first text as app name")
@@ -365,6 +425,28 @@ struct IslandTestsRunner {
             plugin.handle(banners: [])
             plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
             check(coordinator.persistentActivity?.priority == .high, "Outlook email should publish with high priority")
+            plugin.dismissCurrent()
+
+            let emailNotif = IslandNotification(appName: "Microsoft Outlook", kind: .email, sender: "Sarah Connor", title: "Q4 planning", channel: nil, body: "See attached")
+            let computedWidth = NotificationBridgePlugin.messageWingWidth(for: emailNotif, maxAllowedWidth: 185)
+            check(computedWidth >= 70 && computedWidth <= 185, "Message wing width should fit content and clamp to max")
+
+            let cappedWidth = NotificationBridgePlugin.messageWingWidth(for: emailNotif, maxAllowedWidth: 100)
+            check(cappedWidth <= 100, "Message wing width respects custom max limit")
+
+            plugin.maxWingWidth = 210
+            check(plugin.maxWingWidth == 210, "Max wing width update")
+
+            check(plugin.messageDuration >= 2.0 && plugin.messageDuration <= 10.0, "Message duration is within valid bounds")
+            plugin.messageDuration = 6.5
+            check(UserDefaults.standard.double(forKey: "island.notifications.messageDuration") == 6.5, "Message duration persists to UserDefaults")
+
+            plugin.triggerWidthPreview(isEditing: true)
+            check(plugin.isCalibratingWidth == true, "Trigger width preview should enter calibrating state")
+            check(coordinator.persistentActivity != nil, "Width preview should publish activity")
+            check(coordinator.persistentActivity?.wingSizes.rightWidth == 210, "Right wing width should match calibrating width")
+            plugin.triggerWidthPreview(isEditing: false)
+            check(plugin.isCalibratingWidth == false, "Stopping width preview resets calibrating state")
             plugin.dismissCurrent()
 
             plugin.stop()

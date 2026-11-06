@@ -6,7 +6,19 @@ public protocol AppNotificationParser: Sendable {
 }
 
 enum BannerTextCleaner {
-    private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant"]
+    private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant", "yesterday", "gisteren", "gestern", "hier"]
+    private static let relativeTimeRegex = try? NSRegularExpression(
+        pattern: #"^(?:vor\s+|il y a\s+)?\d+\s*(?:s|m|h|d|min|mins|minute|minutes|hour|hours|sec|secs|uur|minuten|seconden)\s*(?:ago|geleden)?$"#,
+        options: .caseInsensitive
+    )
+
+    static func isTimeMarker(_ text: String) -> Bool {
+        let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if timeMarkers.contains(lowered) { return true }
+        guard let regex = relativeTimeRegex else { return false }
+        let range = NSRange(lowered.startIndex..., in: lowered)
+        return regex.firstMatch(in: lowered, range: range) != nil
+    }
 
     /// Removes combined summary strings (Notification Center often exposes both the joined
     /// description and each individual label), button titles, the app name and timestamps.
@@ -16,7 +28,7 @@ enum BannerTextCleaner {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { !buttonTitles.contains($0.lowercased()) }
-            .filter { !timeMarkers.contains($0.lowercased()) }
+            .filter { !isTimeMarker($0) }
             .filter { $0.caseInsensitiveCompare(appName) != .orderedSame }
 
         return candidates.filter { text in
@@ -29,7 +41,12 @@ enum BannerTextCleaner {
         let lowered = appName.lowercased()
         return banner.texts.contains { text in
             let value = text.lowercased()
-            return value == lowered || value.hasPrefix(lowered + ",")
+            if value == lowered || value.hasPrefix(lowered + ",") || value.hasPrefix(lowered + " ") || value.hasPrefix(lowered + ":") || value.hasPrefix(lowered + " -") || value.hasPrefix(lowered + " –") {
+                return true
+            }
+            let segments = value.components(separatedBy: CharacterSet(charactersIn: ",-–—:"))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            return segments.contains(lowered)
         }
     }
 }
@@ -43,6 +60,41 @@ public struct SlackNotificationParser: AppNotificationParser {
         guard BannerTextCleaner.mentionsApp(banner, appName: appName) else { return nil }
         let content = BannerTextCleaner.contentTexts(of: banner, appName: appName)
         guard let first = content.first else { return nil }
+
+        if content.count >= 3 {
+            let target = content[1]
+            let rawMessage = content[content.count - 1]
+
+            var sender = ""
+            var body = rawMessage
+
+            if let colonIndex = rawMessage.firstIndex(of: ":") {
+                let candidateSender = String(rawMessage[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+                let candidateBody = String(rawMessage[rawMessage.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                if !candidateSender.isEmpty, candidateSender.count <= 40, !candidateSender.contains("\n") {
+                    sender = candidateSender
+                    body = candidateBody
+                }
+            }
+
+            var channel: String?
+            if sender.isEmpty {
+                sender = target
+                channel = nil
+            } else if target.caseInsensitiveCompare(sender) == .orderedSame {
+                channel = nil
+            } else {
+                channel = target.hasPrefix("#") ? target : (target.contains(",") ? target : "#\(target)")
+            }
+
+            return IslandNotification(
+                appName: appName,
+                kind: .message,
+                sender: sender,
+                channel: channel,
+                body: body
+            )
+        }
 
         let body = content.count > 1 ? content[content.count - 1] : ""
         var title = first
@@ -75,7 +127,6 @@ public struct SlackNotificationParser: AppNotificationParser {
     }
 
     private enum channelPattern {
-        /// Handles `Alice (#general)`, `Alice in #general` and a bare `#general`.
         static func firstMatch(in title: String) -> (channel: String, remainder: String)? {
             let pattern = #"^(.*?)\s*(?:\(|\bin\s+)?(#[^\s)]+)\)?$"#
             guard let regex = try? NSRegularExpression(pattern: pattern),
@@ -151,8 +202,17 @@ public struct OutlookNotificationParser: AppNotificationParser {
         }
 
         let subject = content[0]
-        let body = content.count > 2 ? "\(subject)\n\(content[content.count - 1])" : subject
-        return IslandNotification(appName: appName, kind: .email, sender: content[1], channel: nil, body: body)
+        let sender = content[1]
+        let preview = content.count > 2 ? content[content.count - 1] : ""
+        let body = preview.isEmpty ? subject : "\(subject)\n\(preview)"
+        return IslandNotification(
+            appName: appName,
+            kind: .email,
+            sender: sender,
+            title: subject,
+            channel: nil,
+            body: body
+        )
     }
 }
 

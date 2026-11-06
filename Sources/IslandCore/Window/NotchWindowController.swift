@@ -64,7 +64,7 @@ public final class NotchWindowController {
             return CGRect(x: originX, y: originY, width: width, height: height)
         }
 
-        // Start with ignoresMouseEvents = true when closed/resting so the transparent 560x260 canvas
+        // Start with ignoresMouseEvents = true when closed/resting so the transparent canvas
         // never blocks clicks on browser tabs, menu bar items, or app titlebars near the notch.
         panel.ignoresMouseEvents = (coordinator.posture != .expandedCard)
         panel.contentView = hostingView

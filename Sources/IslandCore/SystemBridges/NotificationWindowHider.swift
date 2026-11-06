@@ -39,11 +39,37 @@ public final class NotificationWindowHider {
     }
 
     public func restoreIfNeeded() {
-        guard !hiddenWindows.isEmpty, let origin = savedOrigin() else { return }
+        guard !hiddenWindows.isEmpty, let origin = savedOrigin() else {
+            restoreStrandedNotificationCenterWindows()
+            return
+        }
         for window in hiddenWindows {
             _ = Self.setPosition(of: window, to: origin)
         }
         hiddenWindows = []
+        restoreStrandedNotificationCenterWindows()
+    }
+
+    private func restoreStrandedNotificationCenterWindows() {
+        guard let ncApp = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.notificationcenterui"
+        }) else { return }
+
+        let axApp = AXUIElementCreateApplication(ncApp.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement] else { return }
+
+        for win in windows {
+            if let pos = Self.position(of: win), pos.x >= Self.hiddenThresholdX {
+                if let size = Self.size(of: win), size.height > 300 {
+                    let screenWidth = NSScreen.main?.frame.width ?? 1440
+                    _ = Self.setPosition(of: win, to: CGPoint(x: screenWidth - size.width, y: 0))
+                } else if let origin = savedOrigin() {
+                    _ = Self.setPosition(of: win, to: origin)
+                }
+            }
+        }
     }
 
     private func savedOrigin() -> CGPoint? {
@@ -51,6 +77,21 @@ public final class NotificationWindowHider {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: Self.originXKey) != nil else { return nil }
         return CGPoint(x: defaults.double(forKey: Self.originXKey), y: defaults.double(forKey: Self.originYKey))
+    }
+
+    private static func size(of element: AXUIElement) -> CGSize? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &ref) == .success,
+              let value = ref else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    private static func string(_ element: AXUIElement, _ attribute: String) -> String? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
+        return ref as? String
     }
 
     private static func position(of element: AXUIElement) -> CGPoint? {
