@@ -304,6 +304,7 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
                        let val = posRef {
                         var pt = CGPoint.zero
                         if AXValueGetValue(val as! AXValue, .cgPoint, &pt), pt.x >= 8000,
+                           !NotificationWindowHider.shared.owns(win),
                            let posVal = AXValueCreate(.cgPoint, &orig) {
                             AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, posVal)
                         }
@@ -880,6 +881,8 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         guard depth <= 12 else { return }
 
         let role = Self.axString(element, kAXRoleAttribute) ?? ""
+        // NotificationCenter exposes the frontmost app's whole menu bar; walking it blocks the main thread for seconds.
+        if role == (kAXMenuBarRole as String) { return }
         let currentWindow = (role == (kAXWindowRole as String)) ? element : enclosingWindow
         let subrole = Self.axString(element, kAXSubroleAttribute) ?? ""
         if subrole == "AXNotificationCenterAlert" || subrole == "AXNotificationCenterBanner" {

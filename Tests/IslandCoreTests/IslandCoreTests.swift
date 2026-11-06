@@ -265,6 +265,112 @@ struct IslandTestsRunner {
             print("  [PASS] testIncomingAirDropReceiverStateMachine")
         }
 
+        // Notification parsers
+        do {
+            let parsers = NotificationParserSet()
+
+            let slackChannel = RawBanner(texts: ["Slack, Alice (#general), Standup moved", "Slack", "Alice (#general)", "Standup moved", "now"])
+            let slack = parsers.parse(slackChannel)
+            check(slack?.appName == "Slack", "Slack banner should be recognised")
+            check(slack?.sender == "Alice", "Slack sender should exclude the channel suffix")
+            check(slack?.channel == "#general", "Slack channel should be extracted from parentheses")
+            check(slack?.body == "Standup moved", "Slack body should be the last content text")
+            check(slack?.headline == "Alice · #general", "Slack headline should join sender and channel")
+
+            let slackIn = parsers.parse(RawBanner(texts: ["Slack", "Bob in #dev", "ship it"]))
+            check(slackIn?.sender == "Bob" && slackIn?.channel == "#dev", "Slack 'X in #channel' title should parse")
+
+            let slackDM = parsers.parse(RawBanner(texts: ["Slack", "Carol", "lunch?"]))
+            check(slackDM?.sender == "Carol" && slackDM?.channel == nil, "Slack direct message has no channel")
+
+            let call = parsers.parse(RawBanner(
+                texts: ["Microsoft Teams", "Bob is calling you", "Accept", "Decline"],
+                buttons: [BannerButton(title: "Accept", press: { true }), BannerButton(title: "Decline", press: { true })]
+            ))
+            check(call?.kind == .incomingCall, "Teams banner with call buttons should be an incoming call")
+            check(call?.sender == "Bob", "Teams caller name should be extracted")
+
+            let teamsMessage = parsers.parse(RawBanner(texts: ["Microsoft Teams", "Dana", "See you at 3"]))
+            check(teamsMessage?.kind == .message && teamsMessage?.sender == "Dana", "Teams chat banner should be a message")
+
+            let email = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Q4 notes, Dana Lee, See attached", "Q4 notes", "Dana Lee", "See attached"]))
+            check(email?.kind == .email && email?.sender == "Dana Lee", "Outlook banner should parse as an email from the sender")
+            check(email?.headline == "Dana Lee", "Email headline should be the sender only")
+            check(email?.body == "Q4 notes\nSee attached", "Email body should be subject then preview")
+            let noPreview = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Lunch?, Dana Lee", "Lunch?", "Dana Lee"]))
+            check(noPreview?.body == "Lunch?", "Email without preview should carry only the subject")
+            check(parsers.parse(RawBanner(texts: ["Microsoft Outlook", "Weekly sync", "Starts in 5 minutes"])) == nil, "Outlook calendar reminders are ignored")
+
+            let realOutlook = parsers.parse(RawBanner(texts: [
+                "Microsoft Outlook, Re: Test hello world, Erencan Kanmaz, CAUTION: This email originated from outside. Hillo",
+                "Re: Test hello world",
+                "Erencan Kanmaz",
+                "CAUTION: This email originated from outside. Hillo"
+            ]))
+            check(realOutlook?.kind == .email, "Captured real Outlook banner should parse as an email")
+            check(realOutlook?.sender == "Erencan Kanmaz", "Captured Outlook banner sender is the subtitle")
+            check(realOutlook?.body.hasPrefix("Re: Test hello world\n") == true, "Captured Outlook banner subject is the title")
+
+            check(parsers.parse(RawBanner(texts: ["Mail", "Eve", "Hello"])) == nil, "Unknown apps are not handled by app parsers")
+            check(parsers.parseGeneric(RawBanner(texts: ["Mail", "Eve", "Hello"]))?.appName == "Mail", "Generic parser should use first text as app name")
+            print("  [PASS] testNotificationParsers")
+        }
+
+        // Notification bridge plugin
+        do {
+            let coordinator = NotchStateCoordinator()
+            let plugin = NotificationBridgePlugin()
+            plugin.slackEnabled = true
+            plugin.teamsEnabled = true
+            plugin.otherAppsEnabled = false
+            plugin.start(coordinator: coordinator)
+
+            var accepted = false
+            let callBanner = RawBanner(
+                texts: ["Microsoft Teams", "Bob is calling you", "Accept", "Decline"],
+                buttons: [BannerButton(title: "Accept", press: { accepted = true; return true }), BannerButton(title: "Decline", press: { true })]
+            )
+            plugin.handle(banners: [callBanner])
+            check(coordinator.persistentActivity?.pluginID == plugin.id, "Teams call should publish an activity")
+            check(coordinator.persistentActivity?.priority == .critical, "Calls should be critical priority")
+
+            plugin.handle(banners: [callBanner, RawBanner(texts: ["Slack", "Alice", "hi"])])
+            check(coordinator.persistentActivity?.priority == .critical, "A message must not replace an active call")
+
+            plugin.acceptCurrent()
+            check(accepted, "Accept should press the banner's Accept button")
+            check(coordinator.persistentActivity == nil, "Activity should clear after accepting")
+
+            plugin.slackEnabled = false
+            plugin.handle(banners: [RawBanner(texts: ["Slack", "Zed", "ignored"])])
+            check(coordinator.persistentActivity == nil, "Disabled app should not publish")
+
+            plugin.slackEnabled = true
+
+            var hideCalls = 0
+            plugin.hideOutlookBanner = true
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "S", "Dana", "P"], hideBanner: { hideCalls += 1 })])
+            check(hideCalls == 1, "Banner should be hidden once when hide option is enabled")
+            plugin.hideOutlookBanner = false
+            plugin.handle(banners: [])
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "S", "Dana", "P"], hideBanner: { hideCalls += 1 })])
+            check(hideCalls == 1, "Banner must not be hidden when hide option is disabled")
+            plugin.dismissCurrent()
+            plugin.handle(banners: [])
+
+            plugin.outlookEnabled = false
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
+            check(coordinator.persistentActivity == nil, "Disabled Outlook should not publish")
+            plugin.outlookEnabled = true
+            plugin.handle(banners: [])
+            plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
+            check(coordinator.persistentActivity?.priority == .high, "Outlook email should publish with high priority")
+            plugin.dismissCurrent()
+
+            plugin.stop()
+            print("  [PASS] testNotificationBridgePlugin")
+        }
+
         print("==> Test Results: \(passed) checks passed, \(failed) failed.")
         if failed > 0 {
             Foundation.exit(1)
