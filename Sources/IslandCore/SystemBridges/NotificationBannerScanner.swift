@@ -26,6 +26,7 @@ public final class NotificationBannerScanner {
 
     public func start() {
         stop()
+        if AXIsProcessTrusted() { NotificationBannerDismisser.recoverStrandedWindows() }
         guard AXIsProcessTrusted() else {
             IslandLogger.permissions.info("Notification scanner waiting for Accessibility permission")
             scheduleFallbackTimer()
@@ -39,7 +40,6 @@ public final class NotificationBannerScanner {
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         removeObserver()
-        NotificationWindowHider.shared.restoreIfNeeded()
         lastKeys = []
     }
 
@@ -60,8 +60,6 @@ public final class NotificationBannerScanner {
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         var banners: [RawBanner] = []
         Self.collectBanners(from: appElement, enclosingWindow: nil, depth: 0, into: &banners)
-
-        if banners.isEmpty { NotificationWindowHider.shared.restoreIfNeeded() }
 
         let keys = banners.map(\.key)
         guard keys != lastKeys else { return }
@@ -133,22 +131,14 @@ public final class NotificationBannerScanner {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
-            let debugMsg = "[SCANNER] texts=\(texts)\n"
-            if let data = debugMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? debugMsg.write(toFile: "/tmp/island-debug.log", atomically: false, encoding: .utf8)
-            }
-            banners.append(
-                RawBanner(
-                    texts: texts,
-                    buttons: buttons,
-                    pressBanner: { press(element) },
-                    hideBanner: { hide(banner: element, in: currentWindow) }
-                )
+            let candidate = RawBanner(
+                texts: texts,
+                buttons: buttons,
+                pressBanner: { press(element) },
+                hideBanner: { NotificationBannerDismisser.dismiss(element) }
             )
+            guard !BannerTextCleaner.isTrayItem(candidate) else { return }
+            banners.append(candidate)
             return
         }
 
@@ -221,15 +211,6 @@ public final class NotificationBannerScanner {
     }
 
 
-
-    /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.
-    private static func hide(banner: AXUIElement, in window: AXUIElement?) {
-        guard let window else {
-            IslandLogger.system.error("Notification banner has no enclosing window to hide")
-            return
-        }
-        MainActor.assumeIsolated { NotificationWindowHider.shared.hide(window) }
-    }
 
     private static func press(_ element: AXUIElement) -> Bool {
         AXUIElementPerformAction(element, kAXPressAction as CFString) == .success

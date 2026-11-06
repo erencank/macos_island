@@ -54,6 +54,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let durationKey = "island.notifications.messageDuration"
     private static let maxWingWidthKey = "island.notifications.maxWingWidth"
     private static let hoverExitDismissDelay: TimeInterval = 1.5
+    private static let duplicateWindow: TimeInterval = 600
     private static let ignoredAppNames: Set<String> = ["airdrop", "island"]
 
     private struct ActiveNotification {
@@ -66,6 +67,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private let parsers = NotificationParserSet()
     private weak var coordinator: NotchStateCoordinator?
     private var presentedKeys = Set<String>()
+    private var recentSignatures: [String: Date] = [:]
     private var active: ActiveNotification?
     private var dismissTask: Task<Void, Never>?
     private var widthCalibrationDismissTask: Task<Void, Never>?
@@ -108,6 +110,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissTask?.cancel()
         hoverCancellable?.cancel()
         presentedKeys = []
+        recentSignatures = [:]
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id)
     }
@@ -131,14 +134,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
         for banner in banners where !presentedKeys.contains(banner.key) {
             presentedKeys.insert(banner.key)
-            let parsed = notification(for: banner)
-            let logMsg = "[PLUGIN] key=\(banner.key) parsed=\(String(describing: parsed?.headline)) app=\(String(describing: parsed?.appName))\n"
-            if let data = logMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            }
-            guard let notification = parsed else { continue }
+            guard let notification = notification(for: banner), !isRecentDuplicate(notification) else { continue }
             if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
             present(notification, banner: banner, payloadID: banner.key)
         }
@@ -149,7 +145,22 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         }
     }
 
+    /// A tray card re-exposed by hovering carries the same content as the banner shown earlier, so it
+    /// must neither be presented again nor dismissed (dismissing it would remove it from the tray).
+    private func isRecentDuplicate(_ notification: IslandNotification) -> Bool {
+        guard notification.kind != .incomingCall else { return false }
+        let now = Date()
+        recentSignatures = recentSignatures.filter { now.timeIntervalSince($0.value) < Self.duplicateWindow }
+        let signature = [notification.appName, notification.sender, notification.channel ?? "", notification.title ?? "", notification.body]
+            .joined(separator: "\u{1F}")
+        defer { recentSignatures[signature] = now }
+        return recentSignatures[signature] != nil
+    }
+
     private func notification(for banner: RawBanner) -> IslandNotification? {
+        if BannerTextCleaner.isTrayItem(banner) {
+            return nil
+        }
         if let parsed = parsers.parse(banner) {
             return isAppEnabled(parsed.appName) ? parsed : nil
         }
