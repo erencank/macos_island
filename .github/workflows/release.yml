@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    name: Build & Release DMG
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release version
+        id: version
+        run: |
+          RAW_TAG="${{ github.event.inputs.tag_name }}"
+          if [ -z "$RAW_TAG" ]; then
+            RAW_TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # Strip leading 'v' if present (e.g. v1.2.0 -> 1.2.0)
+          CLEAN_VERSION="${RAW_TAG#v}"
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building release for tag: ${RAW_TAG} (version: ${CLEAN_VERSION})"
+
+      - name: Run automated test suite
+        run: ./Scripts/run-tests.sh
+
+      - name: Build release DMG
+        run: |
+          ./Scripts/build-dmg.sh "${{ steps.version.outputs.version }}" "Island"
+
+      - name: Generate SHA-256 checksum
+        run: |
+          cd build
+          shasum -a 256 Island.dmg > Island.dmg.sha256
+          echo "Generated SHA-256:"
+          cat Island.dmg.sha256
+
+      - name: Upload DMG artifact to workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: Island-${{ steps.version.outputs.tag }}-dmg
+          path: |
+            build/Island.dmg
+            build/Island.dmg.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Uploading assets..."
+            gh release upload "$TAG" build/Island.dmg build/Island.dmg.sha256 --clobber
+          else
+            echo "Creating new release $TAG..."
+            gh release create "$TAG" \
+              build/Island.dmg \
+              build/Island.dmg.sha256 \
+              --title "Island $TAG" \
+              --generate-notes
+          fi

@@ -9,6 +9,7 @@ MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
 CONFIG="${1:-debug}"
+VERSION="${2:-${APP_VERSION:-1.0.0}}"
 
 # Auto-select MacOSX26.5.sdk if the default symlink points to an mismatched beta SDK
 if [[ -z "${SDKROOT:-}" ]]; then
@@ -54,7 +55,7 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 cp "${BIN_PATH}" "${MACOS_DIR}/Island"
 cp "${BUILD_DIR}/libIslandMediaRemoteBridge.dylib" "${RESOURCES_DIR}/libIslandMediaRemoteBridge.dylib"
 
-cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
+cat > "${CONTENTS_DIR}/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -74,9 +75,9 @@ cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
