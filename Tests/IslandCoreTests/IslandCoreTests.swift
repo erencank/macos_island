@@ -360,6 +360,17 @@ struct IslandTestsRunner {
             check(slack1on1?.headline == "Alex Rivera", "Headline is sender only")
             check(slack1on1?.subtext == "Looking into it now", "Subtext is message")
 
+            let slackDirectNoColon = parsers.parse(RawBanner(texts: [
+                "Slack, bol, Guus Eijsvogels, Hier lijkt wat mis te gaan",
+                "bol",
+                "Guus Eijsvogels",
+                "Hier lijkt wat mis te gaan"
+            ]))
+            check(slackDirectNoColon?.sender == "Guus Eijsvogels", "Direct DM sender extracted without colon")
+            check(slackDirectNoColon?.channel == nil, "Direct DM has no channel")
+            check(slackDirectNoColon?.headline == "Guus Eijsvogels", "Direct DM headline is sender only")
+            check(slackDirectNoColon?.subtext == "Hier lijkt wat mis te gaan", "Direct DM subtext is message body")
+
             check(parsers.parse(RawBanner(texts: ["Mail", "Eve", "Hello"])) == nil, "Unknown apps are not handled by app parsers")
             check(parsers.parseGeneric(RawBanner(texts: ["Mail", "Eve", "Hello"]))?.appName == "Mail", "Generic parser should use first text as app name")
             print("  [PASS] testNotificationParsers")

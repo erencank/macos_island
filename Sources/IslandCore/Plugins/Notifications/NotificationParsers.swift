@@ -41,7 +41,12 @@ enum BannerTextCleaner {
         let lowered = appName.lowercased()
         return banner.texts.contains { text in
             let value = text.lowercased()
-            return value == lowered || value.hasPrefix(lowered + ",")
+            if value == lowered || value.hasPrefix(lowered + ",") || value.hasPrefix(lowered + " ") || value.hasPrefix(lowered + ":") || value.hasPrefix(lowered + " -") || value.hasPrefix(lowered + " –") {
+                return true
+            }
+            let segments = value.components(separatedBy: CharacterSet(charactersIn: ",-–—:"))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            return segments.contains(lowered)
         }
     }
 }

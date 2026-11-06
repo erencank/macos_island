@@ -131,7 +131,14 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
         for banner in banners where !presentedKeys.contains(banner.key) {
             presentedKeys.insert(banner.key)
-            guard let notification = notification(for: banner) else { continue }
+            let parsed = notification(for: banner)
+            let logMsg = "[PLUGIN] key=\(banner.key) parsed=\(String(describing: parsed?.headline)) app=\(String(describing: parsed?.appName))\n"
+            if let data = logMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+            guard let notification = parsed else { continue }
             if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
             present(notification, banner: banner, payloadID: banner.key)
         }

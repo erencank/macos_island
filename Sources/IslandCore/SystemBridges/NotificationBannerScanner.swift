@@ -129,17 +129,18 @@ public final class NotificationBannerScanner {
         if role == kAXMenuBarRole { return }
         let currentWindow = role == kAXWindowRole ? element : enclosingWindow
 
-        if let currentWindow, isSidebarWindow(currentWindow) {
-            return
-        }
-        if isSidebarWindow(element) {
-            return
-        }
-
         if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
+            let debugMsg = "[SCANNER] texts=\(texts)\n"
+            if let data = debugMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? debugMsg.write(toFile: "/tmp/island-debug.log", atomically: false, encoding: .utf8)
+            }
             banners.append(
                 RawBanner(
                     texts: texts,
@@ -219,30 +220,7 @@ public final class NotificationBannerScanner {
         return ref as? String
     }
 
-    private static func isSidebarWindow(_ window: AXUIElement) -> Bool {
-        if let title = string(window, kAXTitleAttribute),
-           title.localizedCaseInsensitiveContains("Notification Cent") ||
-           title.localizedCaseInsensitiveContains("Berichten") {
-            return true
-        }
-        if let id = string(window, "AXIdentifier"),
-           id.localizedCaseInsensitiveContains("NotificationCenter") {
-            return true
-        }
-        if let size = size(of: window), size.height > 300 {
-            return true
-        }
-        return false
-    }
 
-    private static func size(of element: AXUIElement) -> CGSize? {
-        var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &ref) == .success,
-              let value = ref else { return nil }
-        var size = CGSize.zero
-        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
-        return size
-    }
 
     /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.
     private static func hide(banner: AXUIElement, in window: AXUIElement?) {

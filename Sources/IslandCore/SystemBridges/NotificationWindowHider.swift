@@ -25,11 +25,6 @@ public final class NotificationWindowHider {
     public func hide(_ window: AXUIElement) {
         guard !owns(window) else { return }
 
-        if let size = Self.size(of: window), size.height > 300 { return }
-        if let title = Self.string(window, kAXTitleAttribute),
-           title.localizedCaseInsensitiveContains("Notification Cent") ||
-           title.localizedCaseInsensitiveContains("Berichten") { return }
-
         if let current = Self.position(of: window), current.x < Self.hiddenThresholdX {
             originalOrigin = current
             UserDefaults.standard.set(Double(current.x), forKey: Self.originXKey)
