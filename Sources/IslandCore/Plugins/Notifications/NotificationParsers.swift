@@ -6,6 +6,16 @@ public protocol AppNotificationParser: Sendable {
 }
 
 enum BannerTextCleaner {
+    private static let trimCharacterSet: CharacterSet = {
+        var set = CharacterSet.whitespacesAndNewlines
+        set.insert(charactersIn: "\u{200E}\u{200F}\u{200B}\u{200C}\u{200D}\u{FEFF}")
+        return set
+    }()
+
+    static func trim(_ text: String) -> String {
+        text.trimmingCharacters(in: trimCharacterSet)
+    }
+
     private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant", "yesterday", "gisteren", "gestern", "hier"]
     private static let relativeTimeRegex = try? NSRegularExpression(
         pattern: #"^(?:vor\s+|il y a\s+)?\d+\s*(?:s|sec|secs|sek|seks|m|min|mins|minute|minutes|minuten|h|hr|hrs|hour|hours|uur|stunde|stunden|d|day|days|dag|dagen|tag|tage|w|wk|wks|week|weken|woche|mo|yr|y|jaar|jahre?)\.?\s*(?:ago|geleden|vor|her)?$"#,
@@ -69,36 +79,39 @@ enum BannerTextCleaner {
     /// Removes combined summary strings (Notification Center often exposes both the joined
     /// description and each individual label), button titles, the app name and timestamps.
     static func contentTexts(of banner: RawBanner, appName: String) -> [String] {
-        let buttonTitles = Set(banner.buttons.map { $0.title.lowercased() })
+        let buttonTitles = Set(banner.buttons.map { trim($0.title).lowercased() })
         let candidates = banner.texts
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { trim($0) }
             .filter { !$0.isEmpty }
             .filter { !buttonTitles.contains($0.lowercased()) }
             .filter { !isTimeMarker($0) }
             .filter { $0.caseInsensitiveCompare(appName) != .orderedSame }
 
+        let loweredApp = trim(appName).lowercased()
         return candidates.filter { text in
+            guard text.lowercased().hasPrefix(loweredApp) else { return true }
             let contained = candidates.filter { $0 != text && text.contains($0) }
             return contained.count < 2
         }
     }
 
     static func mentionsApp(_ banner: RawBanner, appName: String) -> Bool {
-        let lowered = appName.lowercased()
+        let lowered = trim(appName).lowercased()
         return banner.texts.contains { text in
-            let value = text.lowercased()
+            let value = trim(text).lowercased()
             if value == lowered || value.hasPrefix(lowered + ",") || value.hasPrefix(lowered + " ") || value.hasPrefix(lowered + ":") || value.hasPrefix(lowered + " -") || value.hasPrefix(lowered + " –") {
                 return true
             }
             let segments = value.components(separatedBy: CharacterSet(charactersIn: ",-–—:"))
-                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { trim($0) }
             return segments.contains(lowered)
         }
     }
 }
 
 public struct SlackNotificationParser: AppNotificationParser {
-    public let appName = "Slack"
+    public static let appName = "Slack"
+    public var appName: String { Self.appName }
 
     public init() {}
 
@@ -149,19 +162,10 @@ public struct SlackNotificationParser: AppNotificationParser {
         if let match = Self.channelPattern.firstMatch(in: title) {
             channel = match.channel
             title = match.remainder
-        } else if content.count > 2, Self.isChannelLabel(content[1]) {
-            channel = content[1]
         }
 
         let sender = Self.stripLeadIn(title)
-        if sender.isEmpty, let channel, content.count > 2 {
-            return IslandNotification(appName: appName, kind: .message, sender: content[1], channel: channel, body: body)
-        }
         return IslandNotification(appName: appName, kind: .message, sender: sender, channel: channel, body: body)
-    }
-
-    private static func isChannelLabel(_ text: String) -> Bool {
-        text.hasPrefix("#")
     }
 
     private static func stripLeadIn(_ title: String) -> String {
@@ -187,7 +191,8 @@ public struct SlackNotificationParser: AppNotificationParser {
 }
 
 public struct TeamsNotificationParser: AppNotificationParser {
-    public let appName = "Microsoft Teams"
+    public static let appName = "Microsoft Teams"
+    public var appName: String { Self.appName }
     private static let appAliases = ["microsoft teams", "teams"]
     private static let callMarkers = ["is calling", "incoming call", "calling you", "calling…", "calling..."]
     private static let callButtonMarkers = ["accept", "decline", "answer", "reject"]
@@ -227,7 +232,8 @@ public struct TeamsNotificationParser: AppNotificationParser {
 }
 
 public struct OutlookNotificationParser: AppNotificationParser {
-    public let appName = "Microsoft Outlook"
+    public static let appName = "Microsoft Outlook"
+    public var appName: String { Self.appName }
     private static let appAliases = ["microsoft outlook", "outlook"]
     private static let calendarMarkers = ["starts in", "starting in"]
 
@@ -250,14 +256,13 @@ public struct OutlookNotificationParser: AppNotificationParser {
         let subject = content[0]
         let sender = content[1]
         let preview = content.count > 2 ? content[content.count - 1] : ""
-        let body = preview.isEmpty ? subject : "\(subject)\n\(preview)"
         return IslandNotification(
             appName: appName,
             kind: .email,
             sender: sender,
             title: subject,
             channel: nil,
-            body: body
+            body: preview
         )
     }
 }
@@ -294,7 +299,7 @@ public struct NotificationParserSet: Sendable {
     public func parseGeneric(_ banner: RawBanner) -> IslandNotification? {
         guard let appName = banner.texts.first?
             .split(separator: ",", maxSplits: 1).first
-            .map({ String($0).trimmingCharacters(in: .whitespaces) }),
+            .map({ BannerTextCleaner.trim(String($0)) }),
             !appName.isEmpty else { return nil }
         return GenericNotificationParser().parse(banner, appName: appName)
     }

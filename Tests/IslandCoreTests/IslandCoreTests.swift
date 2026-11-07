@@ -309,9 +309,11 @@ struct IslandTestsRunner {
             let email = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Q4 notes, Dana Lee, See attached", "Q4 notes", "Dana Lee", "See attached"]))
             check(email?.kind == .email && email?.sender == "Dana Lee", "Outlook banner should parse as an email from the sender")
             check(email?.headline == "Dana Lee", "Email headline should be the sender only")
-            check(email?.body == "Q4 notes\nSee attached", "Email body should be subject then preview")
+            check(email?.title == "Q4 notes", "Email title should be the subject")
+            check(email?.body == "See attached", "Email body should be the preview without duplicating the subject")
             let noPreview = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Lunch?, Dana Lee", "Lunch?", "Dana Lee"]))
-            check(noPreview?.body == "Lunch?", "Email without preview should carry only the subject")
+            check(noPreview?.title == "Lunch?", "Email without preview should carry subject in title")
+            check(noPreview?.body == "", "Email without preview should have empty body")
             check(parsers.parse(RawBanner(texts: ["Microsoft Outlook", "Weekly sync", "Starts in 5 minutes"])) == nil, "Outlook calendar reminders are ignored")
 
             let realOutlook = parsers.parse(RawBanner(texts: [
@@ -324,7 +326,26 @@ struct IslandTestsRunner {
             check(realOutlook?.sender == "Erencan Kanmaz", "Captured Outlook banner sender is the subtitle")
             check(realOutlook?.title == "Re: Test hello world", "Captured Outlook banner title is the subject")
             check(realOutlook?.subtext == "Re: Test hello world", "Captured Outlook banner subtext is the subject")
-            check(realOutlook?.body.hasPrefix("Re: Test hello world\n") == true, "Captured Outlook banner subject is the title")
+            check(realOutlook?.body == "CAUTION: This email originated from outside. Hillo", "Captured Outlook banner body is the preview text")
+
+            let replyOutlook = parsers.parse(RawBanner(texts: [
+                "Microsoft Outlook, Re: Testing 123, Erencan Kanmaz, Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?, stacked",
+                "Re: Testing 123",
+                "Erencan Kanmaz",
+                "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?"
+            ]))
+            check(replyOutlook?.title == "Re: Testing 123", "Reply Outlook email subject parsed")
+            check(replyOutlook?.sender == "Erencan Kanmaz", "Reply Outlook email sender parsed")
+            check(replyOutlook?.body == "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?", "Reply Outlook email preserves full body even when sender name is quoted")
+
+            let whatsAppGeneric = parsers.parseGeneric(RawBanner(texts: [
+                "\u{200E}WhatsApp, Dion, GAMERS #SHAMELESSEBOYS, Was net met matta",
+                "Dion",
+                "GAMERS #SHAMELESSEBOYS",
+                "Was net met matta"
+            ]))
+            check(whatsAppGeneric?.appName == "WhatsApp", "Generic parser strips leading U+200E directional mark from app name")
+            check(whatsAppGeneric?.body == "Was net met matta", "Generic parser extracts message body")
 
             let modernSlack = parsers.parse(RawBanner(texts: [
                 "Slack, acme, acme-team-25, Alex Rivera: Hey team the latest update is ready",
@@ -426,6 +447,27 @@ struct IslandTestsRunner {
 
         // Notification bridge plugin
         do {
+            let notificationDefaultsKeys = [
+                "island.plugin.com.island.plugin.notifications.enabled",
+                "island.notifications.slack",
+                "island.notifications.teams",
+                "island.notifications.outlook",
+                "island.notifications.hideBanner.slack",
+                "island.notifications.hideBanner.teams",
+                "island.notifications.hideBanner.outlook",
+                "island.notifications.otherApps",
+                "island.notifications.messageDuration",
+                "island.notifications.maxWingWidth"
+            ]
+            for key in notificationDefaultsKeys {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            defer {
+                for key in notificationDefaultsKeys {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
+
             let coordinator = NotchStateCoordinator()
             let plugin = NotificationBridgePlugin()
             plugin.slackEnabled = true
@@ -560,6 +602,26 @@ struct IslandTestsRunner {
             mediaService.sendCommand(.previousTrack)
             mediaService.setSimulatedTrack(trackC)
             check(mediaService.latestTrackChange?.direction == .backward, "Track change after previousTrack command should infer backward direction")
+
+            let nowPlayingDefaultsKeys = [
+                "island.plugin.com.island.plugin.nowplaying.enabled",
+                "island.nowplaying.showWhenPaused",
+                "island.nowplaying.themeStyle",
+                "island.nowplaying.disableWaveform",
+                "island.nowplaying.hideSourceActive",
+                "island.nowplaying.auxAction",
+                "island.nowplaying.waveformIntensity",
+                "island.nowplaying.showTrackInfoOnChange",
+                "island.nowplaying.trackInfoDuration"
+            ]
+            for key in nowPlayingDefaultsKeys {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            defer {
+                for key in nowPlayingDefaultsKeys {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
 
             let plugin = NowPlayingPlugin()
             check(plugin.showTrackInfoOnChange == true, "showTrackInfoOnChange should default to true")

@@ -273,7 +273,9 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
     }
 
     private func restoreHiddenNotificationCenterWindowIfNeeded() {
-        var orig: CGPoint = {
+        guard let win = hiddenWindowElement else { return }
+
+        let orig: CGPoint = {
             if let saved = hiddenWindowOriginalOrigin {
                 return saved
             }
@@ -285,31 +287,8 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
             return .zero
         }()
 
-        if let win = hiddenWindowElement, let posVal = AXValueCreate(.cgPoint, &orig) {
-            AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, posVal)
-        }
-
-        // Also scan all NotificationCenter windows in case a previous process died while a window was at x=12000
-        if let ncApp = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == "com.apple.notificationcenterui"
-        }) {
-            let axApp = AXUIElementCreateApplication(ncApp.processIdentifier)
-            var childrenRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &childrenRef) == .success,
-               let windows = childrenRef as? [AXUIElement] {
-                for win in windows {
-                    var posRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
-                       let val = posRef {
-                        var pt = CGPoint.zero
-                        if AXValueGetValue(val as! AXValue, .cgPoint, &pt), pt.x >= 8000,
-                           let posVal = AXValueCreate(.cgPoint, &orig) {
-                            AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, posVal)
-                        }
-                    }
-                }
-            }
-        }
+        NotificationBannerDismisser.setWindowPosition(win, to: orig)
+        NotificationBannerDismisser.recoverStrandedWindows(defaultOrigin: orig)
 
         hiddenWindowElement = nil
         hiddenWindowOriginalOrigin = nil
@@ -317,16 +296,7 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
 
     private func dismissNotificationCenterBannerElement() {
         guard let banner = axBannerElement else { return }
-        var actionNamesRef: CFArray?
-        if AXUIElementCopyActionNames(banner, &actionNamesRef) == .success,
-           let actions = actionNamesRef as? [String] {
-            if let closeAction = actions.first(where: {
-                let lower = $0.lowercased()
-                return lower.contains("close") || lower.contains("cancel") || lower.contains("sluit")
-            }) {
-                _ = AXUIElementPerformAction(banner, closeAction as CFString)
-            }
-        }
+        NotificationBannerDismisser.dismiss(banner)
     }
 
     // MARK: - Simulation Helpers for Interactive Testing
@@ -911,6 +881,9 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         var childrenRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
            let children = childrenRef as? [AXUIElement] {
+            if role == (kAXScrollAreaRole as String), NotificationBannerScanner.isTray(children: children) {
+                return
+            }
             for child in children {
                 collectAirDropAlerts(from: child, enclosingWindow: currentWindow, depth: depth + 1, into: &results)
             }

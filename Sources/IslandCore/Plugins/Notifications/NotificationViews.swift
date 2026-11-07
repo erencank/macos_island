@@ -80,56 +80,72 @@ public struct NotificationExpandedCardView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 NotificationCompactLeadingView(notification: notification)
                     .scaleEffect(1.9)
                     .frame(width: 40, height: 40)
+                    .padding(.top, 2)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(notification.appName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11.5, weight: .semibold))
                         .foregroundColor(.white.opacity(0.6))
                         .lineLimit(1)
                     Text(notification.headline)
-                        .font(.system(size: 14.5, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(1)
                     bodyText
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
 
+            Spacer(minLength: 0)
             actionRow
         }
         .padding(.horizontal, 8)
-        .padding(.top, 4)
-        .padding(.bottom, 16)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
     }
 
     @ViewBuilder
     private var bodyText: some View {
         if notification.kind == .email {
-            if let subject = notification.title ?? notification.body.split(separator: "\n", maxSplits: 1).first.map(String.init), !subject.isEmpty {
+            let subject = (notification.title?.isEmpty == false)
+                ? notification.title!
+                : (notification.body.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "")
+            if !subject.isEmpty {
                 Text(subject)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
                     .lineLimit(1)
             }
-            let preview = notification.title != nil
-                ? notification.body
-                : (notification.body.split(separator: "\n", maxSplits: 1).dropFirst().first.map(String.init) ?? "")
+            let preview: String = {
+                if notification.title?.isEmpty == false {
+                    if notification.body == subject { return "" }
+                    if notification.body.hasPrefix(subject + "\n") {
+                        return String(notification.body.dropFirst(subject.count + 1))
+                    }
+                    return notification.body
+                }
+                return notification.body.split(separator: "\n", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+            }()
             if !preview.isEmpty {
                 Text(preview)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.white.opacity(0.65))
+                    .multilineTextAlignment(.leading)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         } else if !notification.body.isEmpty {
             Text(notification.body)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white.opacity(0.75))
+                .multilineTextAlignment(.leading)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
