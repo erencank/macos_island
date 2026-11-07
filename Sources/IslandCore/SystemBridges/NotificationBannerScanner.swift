@@ -2,10 +2,26 @@ import AppKit
 import ApplicationServices
 
 /// Reads Notification Center banners through Accessibility and publishes them app-agnostically.
-/// An `AXObserver` triggers immediate scans; a slow timer is the fallback when the observer misses events.
+/// An `AXObserver` triggers immediate scans; a fast timer is the fallback when the observer misses events.
 @MainActor
 public final class NotificationBannerScanner {
     public var onBannersChanged: (([RawBanner]) -> Void)?
+
+    /// When `true`, keeps the Notification Center window parked offscreen while idle so incoming
+    /// banners render offscreen from frame 0, and restores it to `(0, 0)` when the tray opens.
+    public var shouldParkOffscreen: Bool = false {
+        didSet {
+            guard oldValue != shouldParkOffscreen, AXIsProcessTrusted() else { return }
+            if shouldParkOffscreen {
+                scan()
+            } else {
+                NotificationBannerDismisser.restoreWindowsOnscreen()
+            }
+        }
+    }
+
+    /// Set to `true` by `NotificationBridgePlugin` when a live banner from a non-hidden app is active.
+    public var allowOnscreenForCurrentBanner: Bool = false
 
     private static let notificationCenterBundleID = "com.apple.notificationcenterui"
     private static let bannerSubroles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
@@ -13,10 +29,14 @@ public final class NotificationBannerScanner {
     private static let observedNotifications = [
         kAXWindowCreatedNotification,
         kAXCreatedNotification,
-        kAXUIElementDestroyedNotification
+        kAXUIElementDestroyedNotification,
+        kAXLayoutChangedNotification,
+        kAXApplicationShownNotification,
+        kAXFocusedUIElementChangedNotification
     ]
     private static let maxTreeDepth = 12
     private static let messagingTimeoutSeconds: Float = 0.25
+    private static let fallbackPollInterval: TimeInterval = 0.04
 
     private var fallbackTimer: Timer?
     private var observer: AXObserver?
@@ -27,7 +47,13 @@ public final class NotificationBannerScanner {
 
     public func start() {
         stop()
-        if AXIsProcessTrusted() { NotificationBannerDismisser.recoverStrandedWindows() }
+        if AXIsProcessTrusted() {
+            if shouldParkOffscreen {
+                NotificationBannerDismisser.parkWindowsOffscreen()
+            } else {
+                NotificationBannerDismisser.restoreWindowsOnscreen()
+            }
+        }
         guard AXIsProcessTrusted() else {
             IslandLogger.permissions.info("Notification scanner waiting for Accessibility permission")
             scheduleFallbackTimer()
@@ -42,6 +68,10 @@ public final class NotificationBannerScanner {
         fallbackTimer = nil
         removeObserver()
         lastKeys = []
+        allowOnscreenForCurrentBanner = false
+        if AXIsProcessTrusted() {
+            NotificationBannerDismisser.restoreWindowsOnscreen()
+        }
     }
 
     /// Dumps the whole Notification Center AX tree for diagnosing app-specific banner layouts.
@@ -61,20 +91,30 @@ public final class NotificationBannerScanner {
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         let scanStart = DispatchTime.now()
         var banners: [RawBanner] = []
-        Self.collectBanners(from: appElement, depth: 0, into: &banners)
+        var trayIsOpen = false
+        Self.collectBanners(from: appElement, enclosingWindow: nil, depth: 0, into: &banners, trayIsOpen: &trayIsOpen)
         let scanMilliseconds = (DispatchTime.now().uptimeNanoseconds - scanStart.uptimeNanoseconds) / 1_000_000
 
         let keys = banners.map(\.key)
-        guard keys != lastKeys else { return }
-        lastKeys = keys
-        if !banners.isEmpty {
-            IslandLogger.system.info("Notification scan found banners in \(scanMilliseconds, privacy: .public) ms")
+        if keys != lastKeys {
+            lastKeys = keys
+            if banners.isEmpty {
+                allowOnscreenForCurrentBanner = false
+            } else {
+                IslandLogger.system.info("Notification scan found banners in \(scanMilliseconds, privacy: .public) ms")
+            }
+            onBannersChanged?(banners)
         }
-        onBannersChanged?(banners)
+
+        if trayIsOpen || allowOnscreenForCurrentBanner || !shouldParkOffscreen {
+            NotificationBannerDismisser.restoreWindowsOnscreen()
+        } else {
+            NotificationBannerDismisser.parkWindowsOffscreen()
+        }
     }
 
     private func scheduleFallbackTimer() {
-        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        fallbackTimer = Timer.scheduledTimer(withTimeInterval: Self.fallbackPollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.scan() }
         }
     }
@@ -121,21 +161,27 @@ public final class NotificationBannerScanner {
     }
 
     /// The tray's scroll area also hosts the widget grid; the live banner's scroll area holds only the banner.
-    private static func isTray(children: [AXUIElement]) -> Bool {
+    static func isTray(children: [AXUIElement]) -> Bool {
         children.contains { string($0, kAXRoleAttribute) == widgetGridRole }
     }
 
     private static func collectBanners(
         from element: AXUIElement,
+        enclosingWindow: AXUIElement? = nil,
         depth: Int,
-        into banners: inout [RawBanner]
+        into banners: inout [RawBanner],
+        trayIsOpen: inout Bool
     ) {
         guard depth <= maxTreeDepth else { return }
 
         // Notification Center exposes the frontmost app's entire menu bar; walking it takes seconds.
         let node = attributes(of: element)
         if node.role == kAXMenuBarRole { return }
-        if node.role == kAXScrollAreaRole, isTray(children: node.children) { return }
+        let currentWindow = (node.role == kAXWindowRole) ? element : enclosingWindow
+        if node.role == kAXScrollAreaRole, isTray(children: node.children) {
+            trayIsOpen = true
+            return
+        }
 
         if bannerSubroles.contains(node.subrole) {
             var texts: [String] = []
@@ -145,15 +191,14 @@ public final class NotificationBannerScanner {
                 texts: texts,
                 buttons: buttons,
                 pressBanner: { press(element) },
-                hideBanner: { NotificationBannerDismisser.dismiss(element) }
+                hideBanner: { NotificationBannerDismisser.dismiss(element, inWindow: currentWindow) }
             )
-            guard !BannerTextCleaner.isTrayItem(candidate) else { return }
             banners.append(candidate)
             return
         }
 
         for child in node.children {
-            collectBanners(from: child, depth: depth + 1, into: &banners)
+            collectBanners(from: child, enclosingWindow: currentWindow, depth: depth + 1, into: &banners, trayIsOpen: &trayIsOpen)
         }
     }
 
@@ -245,8 +290,6 @@ public final class NotificationBannerScanner {
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
         return ref as? String
     }
-
-
 
     private static func press(_ element: AXUIElement) -> Bool {
         AXUIElementPerformAction(element, kAXPressAction as CFString) == .success

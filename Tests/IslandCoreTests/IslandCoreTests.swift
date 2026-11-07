@@ -426,6 +426,27 @@ struct IslandTestsRunner {
 
         // Notification bridge plugin
         do {
+            let notificationDefaultsKeys = [
+                "island.plugin.com.island.plugin.notifications.enabled",
+                "island.notifications.slack",
+                "island.notifications.teams",
+                "island.notifications.outlook",
+                "island.notifications.hideBanner.slack",
+                "island.notifications.hideBanner.teams",
+                "island.notifications.hideBanner.outlook",
+                "island.notifications.otherApps",
+                "island.notifications.messageDuration",
+                "island.notifications.maxWingWidth"
+            ]
+            for key in notificationDefaultsKeys {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            defer {
+                for key in notificationDefaultsKeys {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
+
             let coordinator = NotchStateCoordinator()
             let plugin = NotificationBridgePlugin()
             plugin.slackEnabled = true
@@ -560,6 +581,26 @@ struct IslandTestsRunner {
             mediaService.sendCommand(.previousTrack)
             mediaService.setSimulatedTrack(trackC)
             check(mediaService.latestTrackChange?.direction == .backward, "Track change after previousTrack command should infer backward direction")
+
+            let nowPlayingDefaultsKeys = [
+                "island.plugin.com.island.plugin.nowplaying.enabled",
+                "island.nowplaying.showWhenPaused",
+                "island.nowplaying.themeStyle",
+                "island.nowplaying.disableWaveform",
+                "island.nowplaying.hideSourceActive",
+                "island.nowplaying.auxAction",
+                "island.nowplaying.waveformIntensity",
+                "island.nowplaying.showTrackInfoOnChange",
+                "island.nowplaying.trackInfoDuration"
+            ]
+            for key in nowPlayingDefaultsKeys {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            defer {
+                for key in nowPlayingDefaultsKeys {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
 
             let plugin = NowPlayingPlugin()
             check(plugin.showTrackInfoOnChange == true, "showTrackInfoOnChange should default to true")

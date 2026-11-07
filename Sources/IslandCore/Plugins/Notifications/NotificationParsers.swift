@@ -98,7 +98,8 @@ enum BannerTextCleaner {
 }
 
 public struct SlackNotificationParser: AppNotificationParser {
-    public let appName = "Slack"
+    public static let appName = "Slack"
+    public var appName: String { Self.appName }
 
     public init() {}
 
@@ -149,19 +150,10 @@ public struct SlackNotificationParser: AppNotificationParser {
         if let match = Self.channelPattern.firstMatch(in: title) {
             channel = match.channel
             title = match.remainder
-        } else if content.count > 2, Self.isChannelLabel(content[1]) {
-            channel = content[1]
         }
 
         let sender = Self.stripLeadIn(title)
-        if sender.isEmpty, let channel, content.count > 2 {
-            return IslandNotification(appName: appName, kind: .message, sender: content[1], channel: channel, body: body)
-        }
         return IslandNotification(appName: appName, kind: .message, sender: sender, channel: channel, body: body)
-    }
-
-    private static func isChannelLabel(_ text: String) -> Bool {
-        text.hasPrefix("#")
     }
 
     private static func stripLeadIn(_ title: String) -> String {
@@ -187,7 +179,8 @@ public struct SlackNotificationParser: AppNotificationParser {
 }
 
 public struct TeamsNotificationParser: AppNotificationParser {
-    public let appName = "Microsoft Teams"
+    public static let appName = "Microsoft Teams"
+    public var appName: String { Self.appName }
     private static let appAliases = ["microsoft teams", "teams"]
     private static let callMarkers = ["is calling", "incoming call", "calling you", "calling…", "calling..."]
     private static let callButtonMarkers = ["accept", "decline", "answer", "reject"]
@@ -227,7 +220,8 @@ public struct TeamsNotificationParser: AppNotificationParser {
 }
 
 public struct OutlookNotificationParser: AppNotificationParser {
-    public let appName = "Microsoft Outlook"
+    public static let appName = "Microsoft Outlook"
+    public var appName: String { Self.appName }
     private static let appAliases = ["microsoft outlook", "outlook"]
     private static let calendarMarkers = ["starts in", "starting in"]
 

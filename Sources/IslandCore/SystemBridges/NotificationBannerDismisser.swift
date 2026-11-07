@@ -1,14 +1,23 @@
 import AppKit
 import ApplicationServices
 
-/// Hides live Notification Center banners by performing their own dismiss action, which leaves the
-/// notification in the native tray. Never moves windows: the banner and the tray share one window.
+/// Controls Notification Center banner dismissal and offscreen window parking so incoming banners
+/// never flash on screen while keeping the Notification Center tray functional when opened.
+@MainActor
 enum NotificationBannerDismisser {
-    private static let dismissActionKeywords = ["close", "clear", "dismiss"]
+    private static let notificationCenterBundleID = "com.apple.notificationcenterui"
+    private static let dismissActionKeywords = ["close", "clear", "dismiss", "cancel", "sluit"]
+    private static let offscreenOrigin = CGPoint(x: 12000, y: -4000)
     private static let strandedThresholdX: CGFloat = 8000
 
     @discardableResult
-    static func dismiss(_ banner: AXUIElement) -> Bool {
+    static func dismiss(_ banner: AXUIElement, inWindow window: AXUIElement? = nil) -> Bool {
+        if let window {
+            setWindowPosition(window, to: offscreenOrigin)
+        } else {
+            parkWindowsOffscreen()
+        }
+
         var namesRef: CFArray?
         guard AXUIElementCopyActionNames(banner, &namesRef) == .success,
               let names = namesRef as? [String] else {
@@ -24,31 +33,70 @@ enum NotificationBannerDismisser {
         }
 
         let succeeded = AXUIElementPerformAction(banner, action as CFString) == .success
-        if !succeeded { IslandLogger.system.error("Notification banner dismiss action failed") }
+        if !succeeded {
+            IslandLogger.system.error("Notification banner dismiss action failed")
+        }
         return succeeded
     }
 
-    /// Repairs windows left offscreen by earlier versions that hid banners by moving the window.
-    static func recoverStrandedWindows() {
+    /// Parks all Notification Center windows offscreen so new banners spawn offscreen from frame 0.
+    static func parkWindowsOffscreen() {
+        for window in notificationCenterWindows() {
+            if let pos = position(of: window), pos.x >= strandedThresholdX {
+                continue
+            }
+            setWindowPosition(window, to: offscreenOrigin)
+        }
+    }
+
+    /// Restores any offscreen Notification Center windows back to `(0, 0)`.
+    static func restoreWindowsOnscreen() {
+        recoverStrandedWindows(defaultOrigin: .zero)
+    }
+
+    /// Repairs windows left offscreen at `x >= 8000`.
+    static func recoverStrandedWindows(defaultOrigin: CGPoint = .zero) {
+        for window in notificationCenterWindows() {
+            guard let position = position(of: window),
+                  position.x >= strandedThresholdX else { continue }
+            setWindowPosition(window, to: defaultOrigin)
+        }
+    }
+
+    private static func notificationCenterWindows() -> [AXUIElement] {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == "com.apple.notificationcenterui"
-        }) else { return }
+            $0.bundleIdentifier == notificationCenterBundleID
+        }) else { return [] }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let windows = windowsRef as? [AXUIElement] else { return }
+              let windows = windowsRef as? [AXUIElement] else { return [] }
+        return windows
+    }
 
-        var origin = CGPoint.zero
-        guard let value = AXValueCreate(.cgPoint, &origin) else { return }
-        for window in windows {
-            var ref: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &ref) == .success,
-                  let positionValue = ref else { continue }
-            var position = CGPoint.zero
-            guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
-                  position.x >= strandedThresholdX else { continue }
-            AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
-        }
+    static func position(of element: AXUIElement) -> CGPoint? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &ref) == .success,
+              let value = ref else { return nil }
+        var point = CGPoint.zero
+        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    static func size(of element: AXUIElement) -> CGSize? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &ref) == .success,
+              let value = ref else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    @discardableResult
+    static func setWindowPosition(_ window: AXUIElement, to point: CGPoint) -> Bool {
+        var target = point
+        guard let value = AXValueCreate(.cgPoint, &target) else { return false }
+        return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success
     }
 }

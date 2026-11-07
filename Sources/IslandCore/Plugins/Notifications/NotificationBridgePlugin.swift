@@ -9,24 +9,44 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     public let displayName = "App Notifications"
     public let symbolName = "bell.badge.fill"
 
-    @Published public var isEnabled: Bool
+    @Published public var isEnabled: Bool {
+        didSet { syncScannerParking() }
+    }
     @Published public var slackEnabled: Bool {
-        didSet { UserDefaults.standard.set(slackEnabled, forKey: Self.slackKey) }
+        didSet {
+            UserDefaults.standard.set(slackEnabled, forKey: Self.slackKey)
+            syncScannerParking()
+        }
     }
     @Published public var teamsEnabled: Bool {
-        didSet { UserDefaults.standard.set(teamsEnabled, forKey: Self.teamsKey) }
+        didSet {
+            UserDefaults.standard.set(teamsEnabled, forKey: Self.teamsKey)
+            syncScannerParking()
+        }
     }
     @Published public var outlookEnabled: Bool {
-        didSet { UserDefaults.standard.set(outlookEnabled, forKey: Self.outlookKey) }
+        didSet {
+            UserDefaults.standard.set(outlookEnabled, forKey: Self.outlookKey)
+            syncScannerParking()
+        }
     }
     @Published public var hideSlackBanner: Bool {
-        didSet { UserDefaults.standard.set(hideSlackBanner, forKey: Self.hideSlackKey) }
+        didSet {
+            UserDefaults.standard.set(hideSlackBanner, forKey: Self.hideSlackKey)
+            syncScannerParking()
+        }
     }
     @Published public var hideTeamsBanner: Bool {
-        didSet { UserDefaults.standard.set(hideTeamsBanner, forKey: Self.hideTeamsKey) }
+        didSet {
+            UserDefaults.standard.set(hideTeamsBanner, forKey: Self.hideTeamsKey)
+            syncScannerParking()
+        }
     }
     @Published public var hideOutlookBanner: Bool {
-        didSet { UserDefaults.standard.set(hideOutlookBanner, forKey: Self.hideOutlookKey) }
+        didSet {
+            UserDefaults.standard.set(hideOutlookBanner, forKey: Self.hideOutlookKey)
+            syncScannerParking()
+        }
     }
     @Published public var otherAppsEnabled: Bool {
         didSet { UserDefaults.standard.set(otherAppsEnabled, forKey: Self.otherAppsKey) }
@@ -54,7 +74,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let durationKey = "island.notifications.messageDuration"
     private static let maxWingWidthKey = "island.notifications.maxWingWidth"
     private static let hoverExitDismissDelay: TimeInterval = 1.5
-    private static let duplicateWindow: TimeInterval = 600
+    private static let duplicateWindow: TimeInterval = 3.0
     private static let ignoredAppNames: Set<String> = ["airdrop", "island"]
 
     private struct ActiveNotification {
@@ -90,6 +110,15 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         scanner.onBannersChanged = { [weak self] banners in
             self?.handle(banners: banners)
         }
+        syncScannerParking()
+    }
+
+    private func syncScannerParking() {
+        scanner.shouldParkOffscreen = isEnabled && (
+            (slackEnabled && hideSlackBanner) ||
+            (teamsEnabled && hideTeamsBanner) ||
+            (outlookEnabled && hideOutlookBanner)
+        )
     }
 
     public func start(coordinator: NotchStateCoordinator) {
@@ -132,12 +161,25 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         let currentKeys = Set(banners.map(\.key))
         presentedKeys.formIntersection(currentKeys)
 
-        for banner in banners where !presentedKeys.contains(banner.key) {
+        var anyHiddenBanner = false
+        var anyVisibleBanner = false
+
+        for banner in banners {
+            let parsed = notification(for: banner)
+            if let parsed, shouldHideBanner(for: parsed.appName) {
+                anyHiddenBanner = true
+            } else if !BannerTextCleaner.isTrayItem(banner) {
+                anyVisibleBanner = true
+            }
+
+            guard !presentedKeys.contains(banner.key) else { continue }
             presentedKeys.insert(banner.key)
-            guard let notification = notification(for: banner), !isRecentDuplicate(notification) else { continue }
+            guard let notification = parsed, !isRecentDuplicate(notification) else { continue }
             if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
             present(notification, banner: banner, payloadID: banner.key)
         }
+
+        scanner.allowOnscreenForCurrentBanner = anyVisibleBanner && !anyHiddenBanner
 
         if let active, active.notification.kind == .incomingCall,
            let banner = active.banner, !currentKeys.contains(banner.key) {
@@ -174,18 +216,18 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
     private func shouldHideBanner(for appName: String) -> Bool {
         switch appName {
-        case SlackNotificationParser().appName: return hideSlackBanner
-        case TeamsNotificationParser().appName: return hideTeamsBanner
-        case OutlookNotificationParser().appName: return hideOutlookBanner
+        case SlackNotificationParser.appName: return hideSlackBanner
+        case TeamsNotificationParser.appName: return hideTeamsBanner
+        case OutlookNotificationParser.appName: return hideOutlookBanner
         default: return false
         }
     }
 
     private func isAppEnabled(_ appName: String) -> Bool {
         switch appName {
-        case SlackNotificationParser().appName: return slackEnabled
-        case TeamsNotificationParser().appName: return teamsEnabled
-        case OutlookNotificationParser().appName: return outlookEnabled
+        case SlackNotificationParser.appName: return slackEnabled
+        case TeamsNotificationParser.appName: return teamsEnabled
+        case OutlookNotificationParser.appName: return outlookEnabled
         default: return false
         }
     }
