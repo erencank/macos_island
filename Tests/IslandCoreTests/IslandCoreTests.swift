@@ -309,9 +309,11 @@ struct IslandTestsRunner {
             let email = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Q4 notes, Dana Lee, See attached", "Q4 notes", "Dana Lee", "See attached"]))
             check(email?.kind == .email && email?.sender == "Dana Lee", "Outlook banner should parse as an email from the sender")
             check(email?.headline == "Dana Lee", "Email headline should be the sender only")
-            check(email?.body == "Q4 notes\nSee attached", "Email body should be subject then preview")
+            check(email?.title == "Q4 notes", "Email title should be the subject")
+            check(email?.body == "See attached", "Email body should be the preview without duplicating the subject")
             let noPreview = parsers.parse(RawBanner(texts: ["Microsoft Outlook, Lunch?, Dana Lee", "Lunch?", "Dana Lee"]))
-            check(noPreview?.body == "Lunch?", "Email without preview should carry only the subject")
+            check(noPreview?.title == "Lunch?", "Email without preview should carry subject in title")
+            check(noPreview?.body == "", "Email without preview should have empty body")
             check(parsers.parse(RawBanner(texts: ["Microsoft Outlook", "Weekly sync", "Starts in 5 minutes"])) == nil, "Outlook calendar reminders are ignored")
 
             let realOutlook = parsers.parse(RawBanner(texts: [
@@ -324,7 +326,26 @@ struct IslandTestsRunner {
             check(realOutlook?.sender == "Erencan Kanmaz", "Captured Outlook banner sender is the subtitle")
             check(realOutlook?.title == "Re: Test hello world", "Captured Outlook banner title is the subject")
             check(realOutlook?.subtext == "Re: Test hello world", "Captured Outlook banner subtext is the subject")
-            check(realOutlook?.body.hasPrefix("Re: Test hello world\n") == true, "Captured Outlook banner subject is the title")
+            check(realOutlook?.body == "CAUTION: This email originated from outside. Hillo", "Captured Outlook banner body is the preview text")
+
+            let replyOutlook = parsers.parse(RawBanner(texts: [
+                "Microsoft Outlook, Re: Testing 123, Erencan Kanmaz, Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?, stacked",
+                "Re: Testing 123",
+                "Erencan Kanmaz",
+                "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?"
+            ]))
+            check(replyOutlook?.title == "Re: Testing 123", "Reply Outlook email subject parsed")
+            check(replyOutlook?.sender == "Erencan Kanmaz", "Reply Outlook email sender parsed")
+            check(replyOutlook?.body == "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?", "Reply Outlook email preserves full body even when sender name is quoted")
+
+            let whatsAppGeneric = parsers.parseGeneric(RawBanner(texts: [
+                "\u{200E}WhatsApp, Dion, GAMERS #SHAMELESSEBOYS, Was net met matta",
+                "Dion",
+                "GAMERS #SHAMELESSEBOYS",
+                "Was net met matta"
+            ]))
+            check(whatsAppGeneric?.appName == "WhatsApp", "Generic parser strips leading U+200E directional mark from app name")
+            check(whatsAppGeneric?.body == "Was net met matta", "Generic parser extracts message body")
 
             let modernSlack = parsers.parse(RawBanner(texts: [
                 "Slack, acme, acme-team-25, Alex Rivera: Hey team the latest update is ready",

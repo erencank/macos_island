@@ -388,7 +388,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             sender: "Sarah Connor",
             title: "Project roadmap review",
             channel: nil,
-            body: "Attached is the latest roadmap update for this quarter."
+            body: "Attached is the latest roadmap update for this quarter. Let me know if you have any questions before Friday's sync."
         )
         present(notification, banner: nil, payloadID: "simulated-outlook-\(UUID().uuidString)")
     }
