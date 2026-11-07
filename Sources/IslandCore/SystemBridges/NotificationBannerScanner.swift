@@ -9,6 +9,7 @@ public final class NotificationBannerScanner {
 
     private static let notificationCenterBundleID = "com.apple.notificationcenterui"
     private static let bannerSubroles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
+    private static let widgetGridRole = "AXOpaqueProviderGroup"
     private static let observedNotifications = [
         kAXWindowCreatedNotification,
         kAXCreatedNotification,
@@ -26,6 +27,7 @@ public final class NotificationBannerScanner {
 
     public func start() {
         stop()
+        if AXIsProcessTrusted() { NotificationBannerDismisser.recoverStrandedWindows() }
         guard AXIsProcessTrusted() else {
             IslandLogger.permissions.info("Notification scanner waiting for Accessibility permission")
             scheduleFallbackTimer()
@@ -39,7 +41,6 @@ public final class NotificationBannerScanner {
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         removeObserver()
-        NotificationWindowHider.shared.restoreIfNeeded()
         lastKeys = []
     }
 
@@ -58,14 +59,17 @@ public final class NotificationBannerScanner {
 
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
+        let scanStart = DispatchTime.now()
         var banners: [RawBanner] = []
-        Self.collectBanners(from: appElement, enclosingWindow: nil, depth: 0, into: &banners)
-
-        if banners.isEmpty { NotificationWindowHider.shared.restoreIfNeeded() }
+        Self.collectBanners(from: appElement, depth: 0, into: &banners)
+        let scanMilliseconds = (DispatchTime.now().uptimeNanoseconds - scanStart.uptimeNanoseconds) / 1_000_000
 
         let keys = banners.map(\.key)
         guard keys != lastKeys else { return }
         lastKeys = keys
+        if !banners.isEmpty {
+            IslandLogger.system.info("Notification scan found banners in \(scanMilliseconds, privacy: .public) ms")
+        }
         onBannersChanged?(banners)
     }
 
@@ -116,44 +120,40 @@ public final class NotificationBannerScanner {
         NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == notificationCenterBundleID }
     }
 
+    /// The tray's scroll area also hosts the widget grid; the live banner's scroll area holds only the banner.
+    private static func isTray(children: [AXUIElement]) -> Bool {
+        children.contains { string($0, kAXRoleAttribute) == widgetGridRole }
+    }
+
     private static func collectBanners(
         from element: AXUIElement,
-        enclosingWindow: AXUIElement?,
         depth: Int,
         into banners: inout [RawBanner]
     ) {
         guard depth <= maxTreeDepth else { return }
 
         // Notification Center exposes the frontmost app's entire menu bar; walking it takes seconds.
-        let role = string(element, kAXRoleAttribute)
-        if role == kAXMenuBarRole { return }
-        let currentWindow = role == kAXWindowRole ? element : enclosingWindow
+        let node = attributes(of: element)
+        if node.role == kAXMenuBarRole { return }
+        if node.role == kAXScrollAreaRole, isTray(children: node.children) { return }
 
-        if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
+        if bannerSubroles.contains(node.subrole) {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
-            let debugMsg = "[SCANNER] texts=\(texts)\n"
-            if let data = debugMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/island-debug.log")) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? debugMsg.write(toFile: "/tmp/island-debug.log", atomically: false, encoding: .utf8)
-            }
-            banners.append(
-                RawBanner(
-                    texts: texts,
-                    buttons: buttons,
-                    pressBanner: { press(element) },
-                    hideBanner: { hide(banner: element, in: currentWindow) }
-                )
+            let candidate = RawBanner(
+                texts: texts,
+                buttons: buttons,
+                pressBanner: { press(element) },
+                hideBanner: { NotificationBannerDismisser.dismiss(element) }
             )
+            guard !BannerTextCleaner.isTrayItem(candidate) else { return }
+            banners.append(candidate)
             return
         }
 
-        for child in children(of: element) {
-            collectBanners(from: child, enclosingWindow: currentWindow, depth: depth + 1, into: &banners)
+        for child in node.children {
+            collectBanners(from: child, depth: depth + 1, into: &banners)
         }
     }
 
@@ -165,25 +165,51 @@ public final class NotificationBannerScanner {
     ) {
         guard depth <= maxTreeDepth else { return }
 
-        let role = string(element, kAXRoleAttribute) ?? ""
-        let title = string(element, kAXTitleAttribute) ?? ""
-        let value = string(element, kAXValueAttribute) ?? ""
-        let description = string(element, kAXDescriptionAttribute) ?? ""
-
-        for candidate in [title, value, description] where !candidate.isEmpty && !texts.contains(candidate) {
+        let node = attributes(of: element)
+        for candidate in [node.title, node.value, node.description] where !candidate.isEmpty && !texts.contains(candidate) {
             texts.append(candidate)
         }
 
-        if role == kAXButtonRole || role == kAXMenuButtonRole {
-            let label = [title, description, value].first { !$0.isEmpty } ?? ""
+        if node.role == kAXButtonRole || node.role == kAXMenuButtonRole {
+            let label = [node.title, node.description, node.value].first { !$0.isEmpty } ?? ""
             if !label.isEmpty {
                 buttons.append(BannerButton(title: label, press: { press(element) }))
             }
         }
 
-        for child in children(of: element) {
+        for child in node.children {
             gatherContent(from: child, depth: depth + 1, texts: &texts, buttons: &buttons)
         }
+    }
+
+    private struct NodeAttributes {
+        var role = ""
+        var subrole = ""
+        var title = ""
+        var value = ""
+        var description = ""
+        var children: [AXUIElement] = []
+    }
+
+    /// Reads all traversal attributes in one accessibility round trip; each separate call costs an IPC.
+    private static func attributes(of element: AXUIElement) -> NodeAttributes {
+        let names = [
+            kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
+            kAXValueAttribute, kAXDescriptionAttribute, kAXChildrenAttribute
+        ] as CFArray
+        var valuesRef: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(element, names, AXCopyMultipleAttributeOptions(rawValue: 0), &valuesRef) == .success,
+              let values = valuesRef as? [Any], values.count == 6 else {
+            return NodeAttributes()
+        }
+        return NodeAttributes(
+            role: values[0] as? String ?? "",
+            subrole: values[1] as? String ?? "",
+            title: values[2] as? String ?? "",
+            value: values[3] as? String ?? "",
+            description: values[4] as? String ?? "",
+            children: values[5] as? [AXUIElement] ?? []
+        )
     }
 
     private static func describe(_ element: AXUIElement, depth: Int, into lines: inout [String]) {
@@ -221,15 +247,6 @@ public final class NotificationBannerScanner {
     }
 
 
-
-    /// Banners are only hideable through their enclosing window; the banner element itself ignores moves.
-    private static func hide(banner: AXUIElement, in window: AXUIElement?) {
-        guard let window else {
-            IslandLogger.system.error("Notification banner has no enclosing window to hide")
-            return
-        }
-        MainActor.assumeIsolated { NotificationWindowHider.shared.hide(window) }
-    }
 
     private static func press(_ element: AXUIElement) -> Bool {
         AXUIElementPerformAction(element, kAXPressAction as CFString) == .success

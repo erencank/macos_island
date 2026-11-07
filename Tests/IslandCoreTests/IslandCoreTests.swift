@@ -371,6 +371,54 @@ struct IslandTestsRunner {
             check(slackDirectNoColon?.headline == "Guus Eijsvogels", "Direct DM headline is sender only")
             check(slackDirectNoColon?.subtext == "Hier lijkt wat mis te gaan", "Direct DM subtext is message body")
 
+            // Test Tray & Relative Timestamp Detection
+            check(BannerTextCleaner.isRelativeTimeMarker("1m ago"), "Relative '1m ago' recognized")
+            check(BannerTextCleaner.isRelativeTimeMarker("10m ago"), "Relative '10m ago' recognized")
+            check(BannerTextCleaner.isRelativeTimeMarker("10 min. geleden"), "Dutch relative time recognized")
+            check(BannerTextCleaner.isRelativeTimeMarker("gisteren"), "Dutch yesterday recognized")
+            check(BannerTextCleaner.isRelativeTimeMarker("yesterday"), "English yesterday recognized")
+            check(!BannerTextCleaner.isRelativeTimeMarker("now"), "'now' is not relative past time")
+            check(!BannerTextCleaner.isRelativeTimeMarker("nu"), "'nu' is not relative past time")
+
+            check(BannerTextCleaner.isClockTimeMarker("14:32"), "Clock time 14:32 recognized")
+            check(BannerTextCleaner.isClockTimeMarker("2:45 PM"), "Clock time 2:45 PM recognized")
+            check(!BannerTextCleaner.isClockTimeMarker("Meeting at 14:32"), "Inline clock time not mistaken for label")
+
+            let trayHoveredSlack = RawBanner(
+                texts: [
+                    "Slack, bol, Guus Eijsvogels, Lydia van Dam, Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                    "bol",
+                    "Guus Eijsvogels, Lydia van Dam",
+                    "Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                    "Show Details", "Reply", "Close"
+                ],
+                buttons: [BannerButton(title: "Show Details", press: { true }), BannerButton(title: "Close", press: { true })]
+            )
+            check(BannerTextCleaner.isTrayItem(trayHoveredSlack), "Hovered tray Slack notification recognized as tray item")
+
+            let trayHoveredOutlook = RawBanner(
+                texts: [
+                    "Microsoft Outlook, Re: Test hello world, Erencan Kanmaz, Content here",
+                    "Re: Test hello world",
+                    "Erencan Kanmaz",
+                    "Content here",
+                    "Show Details", "Delete", "Close"
+                ],
+                buttons: [BannerButton(title: "Show Details", press: { true }), BannerButton(title: "Delete", press: { true })]
+            )
+            check(BannerTextCleaner.isTrayItem(trayHoveredOutlook), "Hovered tray Outlook notification recognized as tray item")
+
+            let liveSlackWithDetailsWord = RawBanner(
+                texts: [
+                    "Slack, bol, Guus Eijsvogels, Here are the project details",
+                    "bol",
+                    "Guus Eijsvogels",
+                    "Here are the project details"
+                ]
+            )
+            check(!BannerTextCleaner.isTrayItem(liveSlackWithDetailsWord), "Live message mentioning details word is not classified as tray item")
+            check(parsers.parse(liveSlackWithDetailsWord)?.subtext == "Here are the project details", "Live message body parsed cleanly")
+
             check(parsers.parse(RawBanner(texts: ["Mail", "Eve", "Hello"])) == nil, "Unknown apps are not handled by app parsers")
             check(parsers.parseGeneric(RawBanner(texts: ["Mail", "Eve", "Hello"]))?.appName == "Mail", "Generic parser should use first text as app name")
             print("  [PASS] testNotificationParsers")
@@ -418,6 +466,16 @@ struct IslandTestsRunner {
             plugin.dismissCurrent()
             plugin.handle(banners: [])
 
+            plugin.hideOutlookBanner = true
+            plugin.handle(banners: [RawBanner(
+                texts: ["Microsoft Outlook", "S", "Dana", "P"],
+                buttons: [BannerButton(title: "Close", press: { true })],
+                hideBanner: { hideCalls += 1 }
+            )])
+            check(hideCalls == 1, "Re-exposed identical notification must not be dismissed or presented again")
+            check(coordinator.persistentActivity == nil, "Re-exposed identical notification must not publish")
+            plugin.hideOutlookBanner = false
+
             plugin.outlookEnabled = false
             plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
             check(coordinator.persistentActivity == nil, "Disabled Outlook should not publish")
@@ -426,6 +484,31 @@ struct IslandTestsRunner {
             plugin.handle(banners: [RawBanner(texts: ["Microsoft Outlook", "Subject", "Dana", "Preview"])])
             check(coordinator.persistentActivity?.priority == .high, "Outlook email should publish with high priority")
             plugin.dismissCurrent()
+
+            let historicalSlack = RawBanner(texts: [
+                "Slack, bol, Guus Eijsvogels, Lydia van Dam, Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                "bol",
+                "Guus Eijsvogels, Lydia van Dam",
+                "Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                "4m ago"
+            ], hideBanner: { hideCalls += 1 })
+            plugin.hideSlackBanner = true
+            plugin.handle(banners: [historicalSlack])
+            check(coordinator.persistentActivity == nil, "Historical notification with '4m ago' should be ignored")
+            check(hideCalls == 1, "Historical notification should not trigger hideBanner")
+
+            let hoveredSlack = RawBanner(texts: [
+                "Slack, bol, Guus Eijsvogels, Lydia van Dam, Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                "bol",
+                "Guus Eijsvogels, Lydia van Dam",
+                "Guus Eijsvogels: Voelt sketchy op vrijdagmiddag",
+                "Show Details", "Reply", "Close"
+            ], buttons: [BannerButton(title: "Show Details", press: { true }), BannerButton(title: "Close", press: { true })],
+            hideBanner: { hideCalls += 1 })
+            plugin.handle(banners: [hoveredSlack])
+            check(coordinator.persistentActivity == nil, "Hovered tray card with 'Show Details' should be ignored")
+            check(hideCalls == 1, "Hovered tray card should not trigger hideBanner")
+            plugin.hideSlackBanner = false
 
             let emailNotif = IslandNotification(appName: "Microsoft Outlook", kind: .email, sender: "Sarah Connor", title: "Q4 planning", channel: nil, body: "See attached")
             let computedWidth = NotificationBridgePlugin.messageWingWidth(for: emailNotif, maxAllowedWidth: 185)

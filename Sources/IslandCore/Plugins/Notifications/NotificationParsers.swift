@@ -8,16 +8,62 @@ public protocol AppNotificationParser: Sendable {
 enum BannerTextCleaner {
     private static let timeMarkers: Set<String> = ["now", "nu", "jetzt", "ahora", "maintenant", "yesterday", "gisteren", "gestern", "hier"]
     private static let relativeTimeRegex = try? NSRegularExpression(
-        pattern: #"^(?:vor\s+|il y a\s+)?\d+\s*(?:s|m|h|d|min|mins|minute|minutes|hour|hours|sec|secs|uur|minuten|seconden)\s*(?:ago|geleden)?$"#,
+        pattern: #"^(?:vor\s+|il y a\s+)?\d+\s*(?:s|sec|secs|sek|seks|m|min|mins|minute|minutes|minuten|h|hr|hrs|hour|hours|uur|stunde|stunden|d|day|days|dag|dagen|tag|tage|w|wk|wks|week|weken|woche|mo|yr|y|jaar|jahre?)\.?\s*(?:ago|geleden|vor|her)?$"#,
         options: .caseInsensitive
     )
+    private static let clockTimeRegex = try? NSRegularExpression(
+        pattern: #"^(?:[01]?\d|2[0-3]):[0-5]\d(?:\s*(?:am|pm|vm|nm))?$"#,
+        options: .caseInsensitive
+    )
+
+    private static let trayControlTexts: Set<String> = [
+        "show details", "show less", "details weergeven", "minder weergeven",
+        "details einblenden", "weniger anzeigen", "afficher les détails", "afficher moins",
+        "ver detalles", "mostrar menos", "mostra dettagli", "mostra meno",
+        "clear all", "wis alles", "alle löschen", "tout effacer", "borrar todo", "cancella tutto"
+    ]
+
+    static func isRelativeTimeMarker(_ text: String) -> Bool {
+        let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowered == "yesterday" || lowered == "gisteren" || lowered == "gestern" || lowered == "hier" { return true }
+        guard let regex = relativeTimeRegex else { return false }
+        let range = NSRange(lowered.startIndex..., in: lowered)
+        return regex.firstMatch(in: lowered, range: range) != nil
+    }
+
+    static func isClockTimeMarker(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let regex = clockTimeRegex else { return false }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        return regex.firstMatch(in: trimmed, range: range) != nil
+    }
+
+    static func isTrayText(_ text: String) -> Bool {
+        let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trayControlTexts.contains(lowered) { return true }
+        if lowered == "notification centre" || lowered == "notification center" || lowered == "berichtencentrum" || lowered == "mitteilungszentrale" || lowered == "centre de notifications" {
+            return true
+        }
+        return false
+    }
+
+    static func isTrayItem(_ banner: RawBanner) -> Bool {
+        if banner.texts.contains(where: { isRelativeTimeMarker($0) || isClockTimeMarker($0) || isTrayText($0) }) {
+            return true
+        }
+        if banner.buttons.contains(where: {
+            let t = $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return trayControlTexts.contains(t)
+        }) {
+            return true
+        }
+        return false
+    }
 
     static func isTimeMarker(_ text: String) -> Bool {
         let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if timeMarkers.contains(lowered) { return true }
-        guard let regex = relativeTimeRegex else { return false }
-        let range = NSRange(lowered.startIndex..., in: lowered)
-        return regex.firstMatch(in: lowered, range: range) != nil
+        return isRelativeTimeMarker(lowered) || isClockTimeMarker(lowered)
     }
 
     /// Removes combined summary strings (Notification Center often exposes both the joined
