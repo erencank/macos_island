@@ -425,9 +425,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         let notification = IslandNotification(
             appName: "WhatsApp",
             kind: .message,
-            sender: "Dion",
-            channel: "GAMERS #SHAMELESSEBOYS",
-            body: "Hey everyone, are we hopping on tonight around 8 PM for a few matches?"
+            sender: "Sam Carter",
+            channel: "Weekend Plans",
+            body: "Are we still meeting for dinner at 7 PM tonight? Let me know if I should book a table."
         )
         present(notification, banner: nil, payloadID: "simulated-whatsapp-\(UUID().uuidString)")
     }
