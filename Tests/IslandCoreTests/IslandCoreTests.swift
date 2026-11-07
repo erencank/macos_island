@@ -329,23 +329,42 @@ struct IslandTestsRunner {
             check(realOutlook?.body == "CAUTION: This email originated from outside. Hillo", "Captured Outlook banner body is the preview text")
 
             let replyOutlook = parsers.parse(RawBanner(texts: [
-                "Microsoft Outlook, Re: Testing 123, Erencan Kanmaz, Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?, stacked",
+                "Microsoft Outlook, Re: Testing 123, Alex Rivera, Sounds good On Sat, 7 Nov 2026, 15:40 Alex Rivera, <alex@example.com> wrote: How is the rollout going?, stacked",
                 "Re: Testing 123",
-                "Erencan Kanmaz",
-                "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?"
+                "Alex Rivera",
+                "Sounds good On Sat, 7 Nov 2026, 15:40 Alex Rivera, <alex@example.com> wrote: How is the rollout going?"
             ]))
             check(replyOutlook?.title == "Re: Testing 123", "Reply Outlook email subject parsed")
-            check(replyOutlook?.sender == "Erencan Kanmaz", "Reply Outlook email sender parsed")
-            check(replyOutlook?.body == "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?", "Reply Outlook email preserves full body even when sender name is quoted")
+            check(replyOutlook?.sender == "Alex Rivera", "Reply Outlook email sender parsed")
+            check(replyOutlook?.body == "Sounds good On Sat, 7 Nov 2026, 15:40 Alex Rivera, <alex@example.com> wrote: How is the rollout going?", "Reply Outlook email preserves full body even when sender name is quoted")
 
-            let whatsAppGeneric = parsers.parseGeneric(RawBanner(texts: [
-                "\u{200E}WhatsApp, Dion, GAMERS #SHAMELESSEBOYS, Was net met matta",
-                "Dion",
-                "GAMERS #SHAMELESSEBOYS",
-                "Was net met matta"
+            let whatsAppGroup = parsers.parse(RawBanner(texts: [
+                "\u{200E}WhatsApp, Sam Carter, Weekend Plans, See you all at 7!",
+                "Sam Carter",
+                "Weekend Plans",
+                "See you all at 7!"
             ]))
-            check(whatsAppGeneric?.appName == "WhatsApp", "Generic parser strips leading U+200E directional mark from app name")
-            check(whatsAppGeneric?.body == "Was net met matta", "Generic parser extracts message body")
+            check(whatsAppGroup?.appName == "WhatsApp", "WhatsApp parser recognizes U+200E prefixed banner")
+            check(whatsAppGroup?.sender == "Sam Carter", "WhatsApp group sender extracted")
+            check(whatsAppGroup?.channel == "Weekend Plans", "WhatsApp group name extracted as channel")
+            check(whatsAppGroup?.headline == "Sam Carter · Weekend Plans", "WhatsApp group headline combines sender and group")
+            check(whatsAppGroup?.body == "See you all at 7!", "WhatsApp group message body extracted")
+
+            let whatsAppDirect = parsers.parse(RawBanner(texts: [
+                "WhatsApp, Sam Carter, Hey are you around?",
+                "Sam Carter",
+                "Hey are you around?"
+            ]))
+            check(whatsAppDirect?.sender == "Sam Carter", "WhatsApp direct sender extracted")
+            check(whatsAppDirect?.channel == nil, "WhatsApp direct message has nil channel")
+            check(whatsAppDirect?.body == "Hey are you around?", "WhatsApp direct message body extracted")
+
+            let whatsAppCall = parsers.parse(RawBanner(texts: [
+                "WhatsApp",
+                "Sam Carter",
+                "Incoming voice call"
+            ]))
+            check(whatsAppCall?.kind == .incomingCall && whatsAppCall?.sender == "Sam Carter", "WhatsApp voice call recognized as incomingCall")
 
             let modernSlack = parsers.parse(RawBanner(texts: [
                 "Slack, acme, acme-team-25, Alex Rivera: Hey team the latest update is ready",
@@ -452,9 +471,11 @@ struct IslandTestsRunner {
                 "island.notifications.slack",
                 "island.notifications.teams",
                 "island.notifications.outlook",
+                "island.notifications.whatsapp",
                 "island.notifications.hideBanner.slack",
                 "island.notifications.hideBanner.teams",
                 "island.notifications.hideBanner.outlook",
+                "island.notifications.hideBanner.whatsapp",
                 "island.notifications.otherApps",
                 "island.notifications.messageDuration",
                 "island.notifications.maxWingWidth"
