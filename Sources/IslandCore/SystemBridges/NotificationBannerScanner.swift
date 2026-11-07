@@ -59,12 +59,17 @@ public final class NotificationBannerScanner {
 
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
+        let scanStart = DispatchTime.now()
         var banners: [RawBanner] = []
         Self.collectBanners(from: appElement, depth: 0, into: &banners)
+        let scanMilliseconds = (DispatchTime.now().uptimeNanoseconds - scanStart.uptimeNanoseconds) / 1_000_000
 
         let keys = banners.map(\.key)
         guard keys != lastKeys else { return }
         lastKeys = keys
+        if !banners.isEmpty {
+            IslandLogger.system.info("Notification scan found banners in \(scanMilliseconds, privacy: .public) ms")
+        }
         onBannersChanged?(banners)
     }
 
@@ -116,8 +121,8 @@ public final class NotificationBannerScanner {
     }
 
     /// The tray's scroll area also hosts the widget grid; the live banner's scroll area holds only the banner.
-    private static func isTray(_ scrollArea: AXUIElement) -> Bool {
-        children(of: scrollArea).contains { string($0, kAXRoleAttribute) == widgetGridRole }
+    private static func isTray(children: [AXUIElement]) -> Bool {
+        children.contains { string($0, kAXRoleAttribute) == widgetGridRole }
     }
 
     private static func collectBanners(
@@ -128,11 +133,11 @@ public final class NotificationBannerScanner {
         guard depth <= maxTreeDepth else { return }
 
         // Notification Center exposes the frontmost app's entire menu bar; walking it takes seconds.
-        let role = string(element, kAXRoleAttribute)
-        if role == kAXMenuBarRole { return }
-        if role == kAXScrollAreaRole, isTray(element) { return }
+        let node = attributes(of: element)
+        if node.role == kAXMenuBarRole { return }
+        if node.role == kAXScrollAreaRole, isTray(children: node.children) { return }
 
-        if bannerSubroles.contains(string(element, kAXSubroleAttribute) ?? "") {
+        if bannerSubroles.contains(node.subrole) {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
@@ -147,7 +152,7 @@ public final class NotificationBannerScanner {
             return
         }
 
-        for child in children(of: element) {
+        for child in node.children {
             collectBanners(from: child, depth: depth + 1, into: &banners)
         }
     }
@@ -160,25 +165,51 @@ public final class NotificationBannerScanner {
     ) {
         guard depth <= maxTreeDepth else { return }
 
-        let role = string(element, kAXRoleAttribute) ?? ""
-        let title = string(element, kAXTitleAttribute) ?? ""
-        let value = string(element, kAXValueAttribute) ?? ""
-        let description = string(element, kAXDescriptionAttribute) ?? ""
-
-        for candidate in [title, value, description] where !candidate.isEmpty && !texts.contains(candidate) {
+        let node = attributes(of: element)
+        for candidate in [node.title, node.value, node.description] where !candidate.isEmpty && !texts.contains(candidate) {
             texts.append(candidate)
         }
 
-        if role == kAXButtonRole || role == kAXMenuButtonRole {
-            let label = [title, description, value].first { !$0.isEmpty } ?? ""
+        if node.role == kAXButtonRole || node.role == kAXMenuButtonRole {
+            let label = [node.title, node.description, node.value].first { !$0.isEmpty } ?? ""
             if !label.isEmpty {
                 buttons.append(BannerButton(title: label, press: { press(element) }))
             }
         }
 
-        for child in children(of: element) {
+        for child in node.children {
             gatherContent(from: child, depth: depth + 1, texts: &texts, buttons: &buttons)
         }
+    }
+
+    private struct NodeAttributes {
+        var role = ""
+        var subrole = ""
+        var title = ""
+        var value = ""
+        var description = ""
+        var children: [AXUIElement] = []
+    }
+
+    /// Reads all traversal attributes in one accessibility round trip; each separate call costs an IPC.
+    private static func attributes(of element: AXUIElement) -> NodeAttributes {
+        let names = [
+            kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
+            kAXValueAttribute, kAXDescriptionAttribute, kAXChildrenAttribute
+        ] as CFArray
+        var valuesRef: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(element, names, AXCopyMultipleAttributeOptions(rawValue: 0), &valuesRef) == .success,
+              let values = valuesRef as? [Any], values.count == 6 else {
+            return NodeAttributes()
+        }
+        return NodeAttributes(
+            role: values[0] as? String ?? "",
+            subrole: values[1] as? String ?? "",
+            title: values[2] as? String ?? "",
+            value: values[3] as? String ?? "",
+            description: values[4] as? String ?? "",
+            children: values[5] as? [AXUIElement] ?? []
+        )
     }
 
     private static func describe(_ element: AXUIElement, depth: Int, into lines: inout [String]) {
