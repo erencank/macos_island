@@ -10,13 +10,19 @@ enum NotificationBannerDismisser {
     private static let offscreenOrigin = CGPoint(x: 12000, y: -4000)
     private static let strandedThresholdX: CGFloat = 8000
 
-    @discardableResult
-    static func dismiss(_ banner: AXUIElement, inWindow window: AXUIElement? = nil) -> Bool {
+    /// Moves the banner's enclosing window offscreen without invoking the banner's `Close` action,
+    /// allowing macOS to naturally transition the banner into the Notification Center tray.
+    static func hideWindow(_ window: AXUIElement?) {
         if let window {
             setWindowPosition(window, to: offscreenOrigin)
         } else {
             parkWindowsOffscreen()
         }
+    }
+
+    @discardableResult
+    static func dismiss(_ banner: AXUIElement, inWindow window: AXUIElement? = nil) -> Bool {
+        hideWindow(window)
 
         var namesRef: CFArray?
         guard AXUIElementCopyActionNames(banner, &namesRef) == .success,

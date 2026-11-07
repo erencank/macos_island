@@ -191,7 +191,7 @@ public final class NotificationBannerScanner {
                 texts: texts,
                 buttons: buttons,
                 pressBanner: { press(element) },
-                hideBanner: { NotificationBannerDismisser.dismiss(element, inWindow: currentWindow) }
+                hideBanner: { NotificationBannerDismisser.hideWindow(currentWindow) }
             )
             banners.append(candidate)
             return
