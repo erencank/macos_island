@@ -109,164 +109,6 @@ enum BannerTextCleaner {
     }
 }
 
-public struct SlackNotificationParser: AppNotificationParser {
-    public static let appName = "Slack"
-    public var appName: String { Self.appName }
-
-    public init() {}
-
-    public func parse(_ banner: RawBanner) -> IslandNotification? {
-        guard BannerTextCleaner.mentionsApp(banner, appName: appName) else { return nil }
-        let content = BannerTextCleaner.contentTexts(of: banner, appName: appName)
-        guard let first = content.first else { return nil }
-
-        if content.count >= 3 {
-            let target = content[1]
-            let rawMessage = content[content.count - 1]
-
-            var sender = ""
-            var body = rawMessage
-
-            if let colonIndex = rawMessage.firstIndex(of: ":") {
-                let candidateSender = String(rawMessage[..<colonIndex]).trimmingCharacters(in: .whitespaces)
-                let candidateBody = String(rawMessage[rawMessage.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
-                if !candidateSender.isEmpty, candidateSender.count <= 40, !candidateSender.contains("\n") {
-                    sender = candidateSender
-                    body = candidateBody
-                }
-            }
-
-            var channel: String?
-            if sender.isEmpty {
-                sender = target
-                channel = nil
-            } else if target.caseInsensitiveCompare(sender) == .orderedSame {
-                channel = nil
-            } else {
-                channel = target.hasPrefix("#") ? target : (target.contains(",") ? target : "#\(target)")
-            }
-
-            return IslandNotification(
-                appName: appName,
-                kind: .message,
-                sender: sender,
-                channel: channel,
-                body: body
-            )
-        }
-
-        let body = content.count > 1 ? content[content.count - 1] : ""
-        var title = first
-        var channel: String?
-
-        if let match = Self.channelPattern.firstMatch(in: title) {
-            channel = match.channel
-            title = match.remainder
-        }
-
-        let sender = Self.stripLeadIn(title)
-        return IslandNotification(appName: appName, kind: .message, sender: sender, channel: channel, body: body)
-    }
-
-    private static func stripLeadIn(_ title: String) -> String {
-        var result = title
-        for prefix in ["New message from ", "New message in ", "Message from "] where result.hasPrefix(prefix) {
-            result = String(result.dropFirst(prefix.count))
-        }
-        return result.trimmingCharacters(in: .whitespaces)
-    }
-
-    private enum channelPattern {
-        static func firstMatch(in title: String) -> (channel: String, remainder: String)? {
-            let pattern = #"^(.*?)\s*(?:\(|\bin\s+)?(#[^\s)]+)\)?$"#
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
-                  let remainderRange = Range(match.range(at: 1), in: title),
-                  let channelRange = Range(match.range(at: 2), in: title) else {
-                return nil
-            }
-            return (String(title[channelRange]), String(title[remainderRange]))
-        }
-    }
-}
-
-public struct TeamsNotificationParser: AppNotificationParser {
-    public static let appName = "Microsoft Teams"
-    public var appName: String { Self.appName }
-    private static let appAliases = ["microsoft teams", "teams"]
-    private static let callMarkers = ["is calling", "incoming call", "calling you", "calling…", "calling..."]
-    private static let callButtonMarkers = ["accept", "decline", "answer", "reject"]
-
-    public init() {}
-
-    public func parse(_ banner: RawBanner) -> IslandNotification? {
-        guard let alias = Self.appAliases.first(where: { BannerTextCleaner.mentionsApp(banner, appName: $0) }) else {
-            return nil
-        }
-        let content = BannerTextCleaner.contentTexts(of: banner, appName: alias)
-            .filter { $0.caseInsensitiveCompare(appName) != .orderedSame }
-        guard let first = content.first else { return nil }
-
-        let joined = content.joined(separator: " ").lowercased()
-        let hasCallButtons = banner.buttons.contains { button in
-            Self.callButtonMarkers.contains { button.title.lowercased().contains($0) }
-        }
-        let isCall = hasCallButtons || Self.callMarkers.contains { joined.contains($0) }
-
-        if isCall {
-            let caller = Self.callerName(from: first)
-            return IslandNotification(appName: appName, kind: .incomingCall, sender: caller, channel: nil, body: "Incoming call")
-        }
-        let body = content.count > 1 ? content[content.count - 1] : ""
-        return IslandNotification(appName: appName, kind: .message, sender: first, channel: nil, body: body)
-    }
-
-    private static func callerName(from text: String) -> String {
-        for marker in [" is calling", " calling"] {
-            if let range = text.range(of: marker, options: .caseInsensitive) {
-                return String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return text
-    }
-}
-
-public struct OutlookNotificationParser: AppNotificationParser {
-    public static let appName = "Microsoft Outlook"
-    public var appName: String { Self.appName }
-    private static let appAliases = ["microsoft outlook", "outlook"]
-    private static let calendarMarkers = ["starts in", "starting in"]
-
-    public init() {}
-
-    /// Outlook banners expose `[app, subject, sender, preview]`.
-    public func parse(_ banner: RawBanner) -> IslandNotification? {
-        guard let alias = Self.appAliases.first(where: { BannerTextCleaner.mentionsApp(banner, appName: $0) }) else {
-            return nil
-        }
-        let content = BannerTextCleaner.contentTexts(of: banner, appName: alias)
-        guard content.count >= 2 else { return nil }
-
-        let joined = content.joined(separator: " ").lowercased()
-        if banner.buttons.contains(where: { $0.title.lowercased().contains("snooze") })
-            || Self.calendarMarkers.contains(where: { joined.contains($0) }) {
-            return nil
-        }
-
-        let subject = content[0]
-        let sender = content[1]
-        let preview = content.count > 2 ? content[content.count - 1] : ""
-        return IslandNotification(
-            appName: appName,
-            kind: .email,
-            sender: sender,
-            title: subject,
-            channel: nil,
-            body: preview
-        )
-    }
-}
-
 /// Fallback for apps without a dedicated parser. Must be opted in by the user.
 public struct GenericNotificationParser: Sendable {
     public init() {}
@@ -282,7 +124,14 @@ public struct GenericNotificationParser: Sendable {
 public struct NotificationParserSet: Sendable {
     private let appParsers: [any AppNotificationParser]
 
-    public init(appParsers: [any AppNotificationParser] = [SlackNotificationParser(), TeamsNotificationParser(), OutlookNotificationParser()]) {
+    public init(
+        appParsers: [any AppNotificationParser] = [
+            SlackNotificationParser(),
+            TeamsNotificationParser(),
+            OutlookNotificationParser(),
+            WhatsAppNotificationParser()
+        ]
+    ) {
         self.appParsers = appParsers
     }
 

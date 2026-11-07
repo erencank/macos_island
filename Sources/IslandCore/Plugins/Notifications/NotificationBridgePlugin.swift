@@ -30,6 +30,12 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             syncScannerParking()
         }
     }
+    @Published public var whatsAppEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(whatsAppEnabled, forKey: Self.whatsAppKey)
+            syncScannerParking()
+        }
+    }
     @Published public var hideSlackBanner: Bool {
         didSet {
             UserDefaults.standard.set(hideSlackBanner, forKey: Self.hideSlackKey)
@@ -45,6 +51,12 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     @Published public var hideOutlookBanner: Bool {
         didSet {
             UserDefaults.standard.set(hideOutlookBanner, forKey: Self.hideOutlookKey)
+            syncScannerParking()
+        }
+    }
+    @Published public var hideWhatsAppBanner: Bool {
+        didSet {
+            UserDefaults.standard.set(hideWhatsAppBanner, forKey: Self.hideWhatsAppKey)
             syncScannerParking()
         }
     }
@@ -67,9 +79,11 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
     private static let outlookKey = "island.notifications.outlook"
+    private static let whatsAppKey = "island.notifications.whatsapp"
     private static let hideSlackKey = "island.notifications.hideBanner.slack"
     private static let hideTeamsKey = "island.notifications.hideBanner.teams"
     private static let hideOutlookKey = "island.notifications.hideBanner.outlook"
+    private static let hideWhatsAppKey = "island.notifications.hideBanner.whatsapp"
     private static let otherAppsKey = "island.notifications.otherApps"
     private static let durationKey = "island.notifications.messageDuration"
     private static let maxWingWidthKey = "island.notifications.maxWingWidth"
@@ -99,9 +113,11 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         slackEnabled = defaults.object(forKey: Self.slackKey) as? Bool ?? true
         teamsEnabled = defaults.object(forKey: Self.teamsKey) as? Bool ?? true
         outlookEnabled = defaults.object(forKey: Self.outlookKey) as? Bool ?? true
+        whatsAppEnabled = defaults.object(forKey: Self.whatsAppKey) as? Bool ?? true
         hideSlackBanner = defaults.object(forKey: Self.hideSlackKey) as? Bool ?? false
         hideTeamsBanner = defaults.object(forKey: Self.hideTeamsKey) as? Bool ?? false
         hideOutlookBanner = defaults.object(forKey: Self.hideOutlookKey) as? Bool ?? false
+        hideWhatsAppBanner = defaults.object(forKey: Self.hideWhatsAppKey) as? Bool ?? false
         otherAppsEnabled = defaults.object(forKey: Self.otherAppsKey) as? Bool ?? false
         let savedDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
         messageDuration = max(1.0, min(15.0, savedDuration))
@@ -117,7 +133,8 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         scanner.shouldParkOffscreen = isEnabled && (
             (slackEnabled && hideSlackBanner) ||
             (teamsEnabled && hideTeamsBanner) ||
-            (outlookEnabled && hideOutlookBanner)
+            (outlookEnabled && hideOutlookBanner) ||
+            (whatsAppEnabled && hideWhatsAppBanner)
         )
     }
 
@@ -219,6 +236,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         case SlackNotificationParser.appName: return hideSlackBanner
         case TeamsNotificationParser.appName: return hideTeamsBanner
         case OutlookNotificationParser.appName: return hideOutlookBanner
+        case WhatsAppNotificationParser.appName: return hideWhatsAppBanner
         default: return false
         }
     }
@@ -228,6 +246,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         case SlackNotificationParser.appName: return slackEnabled
         case TeamsNotificationParser.appName: return teamsEnabled
         case OutlookNotificationParser.appName: return outlookEnabled
+        case WhatsAppNotificationParser.appName: return whatsAppEnabled
         default: return false
         }
     }
@@ -360,8 +379,10 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     }
 
     private func activateApp(named name: String) {
+        let target = BannerTextCleaner.trim(name)
         let running = NSWorkspace.shared.runningApplications.first {
-            $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame
+            guard let localized = $0.localizedName else { return false }
+            return BannerTextCleaner.trim(localized).caseInsensitiveCompare(target) == .orderedSame
         }
         if running?.activate() != true {
             IslandLogger.system.error("Notification bridge could not activate source app")
@@ -398,5 +419,16 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             appName: "Microsoft Teams", kind: .incomingCall, sender: "Bob", channel: nil, body: "Incoming call"
         )
         present(notification, banner: nil, payloadID: "simulated-teams-\(UUID().uuidString)")
+    }
+
+    public func simulateWhatsAppMessage() {
+        let notification = IslandNotification(
+            appName: "WhatsApp",
+            kind: .message,
+            sender: "Dion",
+            channel: "GAMERS #SHAMELESSEBOYS",
+            body: "Hey everyone, are we hopping on tonight around 8 PM for a few matches?"
+        )
+        present(notification, banner: nil, payloadID: "simulated-whatsapp-\(UUID().uuidString)")
     }
 }

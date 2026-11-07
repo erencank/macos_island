@@ -338,14 +338,33 @@ struct IslandTestsRunner {
             check(replyOutlook?.sender == "Erencan Kanmaz", "Reply Outlook email sender parsed")
             check(replyOutlook?.body == "Testtt On Sat, 7 Nov 2026, 15:40 Erencan Kanmaz, <erencankanmaz111@gmail.com> wrote: Hii how's it going?", "Reply Outlook email preserves full body even when sender name is quoted")
 
-            let whatsAppGeneric = parsers.parseGeneric(RawBanner(texts: [
+            let whatsAppGroup = parsers.parse(RawBanner(texts: [
                 "\u{200E}WhatsApp, Dion, GAMERS #SHAMELESSEBOYS, Was net met matta",
                 "Dion",
                 "GAMERS #SHAMELESSEBOYS",
                 "Was net met matta"
             ]))
-            check(whatsAppGeneric?.appName == "WhatsApp", "Generic parser strips leading U+200E directional mark from app name")
-            check(whatsAppGeneric?.body == "Was net met matta", "Generic parser extracts message body")
+            check(whatsAppGroup?.appName == "WhatsApp", "WhatsApp parser recognizes U+200E prefixed banner")
+            check(whatsAppGroup?.sender == "Dion", "WhatsApp group sender extracted")
+            check(whatsAppGroup?.channel == "GAMERS #SHAMELESSEBOYS", "WhatsApp group name extracted as channel")
+            check(whatsAppGroup?.headline == "Dion · GAMERS #SHAMELESSEBOYS", "WhatsApp group headline combines sender and group")
+            check(whatsAppGroup?.body == "Was net met matta", "WhatsApp group message body extracted")
+
+            let whatsAppDirect = parsers.parse(RawBanner(texts: [
+                "WhatsApp, Dion, Hey are you around?",
+                "Dion",
+                "Hey are you around?"
+            ]))
+            check(whatsAppDirect?.sender == "Dion", "WhatsApp direct sender extracted")
+            check(whatsAppDirect?.channel == nil, "WhatsApp direct message has nil channel")
+            check(whatsAppDirect?.body == "Hey are you around?", "WhatsApp direct message body extracted")
+
+            let whatsAppCall = parsers.parse(RawBanner(texts: [
+                "WhatsApp",
+                "Dion",
+                "Incoming voice call"
+            ]))
+            check(whatsAppCall?.kind == .incomingCall && whatsAppCall?.sender == "Dion", "WhatsApp voice call recognized as incomingCall")
 
             let modernSlack = parsers.parse(RawBanner(texts: [
                 "Slack, acme, acme-team-25, Alex Rivera: Hey team the latest update is ready",
@@ -452,9 +471,11 @@ struct IslandTestsRunner {
                 "island.notifications.slack",
                 "island.notifications.teams",
                 "island.notifications.outlook",
+                "island.notifications.whatsapp",
                 "island.notifications.hideBanner.slack",
                 "island.notifications.hideBanner.teams",
                 "island.notifications.hideBanner.outlook",
+                "island.notifications.hideBanner.whatsapp",
                 "island.notifications.otherApps",
                 "island.notifications.messageDuration",
                 "island.notifications.maxWingWidth"
