@@ -376,7 +376,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             kind: .message,
             sender: "Alex Rivera",
             channel: "#acme-team-25",
-            body: "Hey team, the latest update is ready for review."
+            body: "Hey team, the latest update is ready for review. Can someone check the staging deployment before 4 PM?"
         )
         present(notification, banner: nil, payloadID: "simulated-slack-\(UUID().uuidString)")
     }

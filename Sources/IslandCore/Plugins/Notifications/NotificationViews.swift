@@ -135,6 +135,7 @@ public struct NotificationExpandedCardView: View {
                 Text(preview)
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.white.opacity(0.65))
+                    .multilineTextAlignment(.leading)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -142,6 +143,7 @@ public struct NotificationExpandedCardView: View {
             Text(notification.body)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white.opacity(0.75))
+                .multilineTextAlignment(.leading)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
