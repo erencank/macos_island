@@ -689,6 +689,15 @@ public struct SettingsWindowView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                groupTitle("WhatsApp")
+                settingsCard {
+                    settingsToggleRow(title: "Show messages and calls", isOn: $notificationPlugin.whatsAppEnabled)
+                    rowDivider
+                    settingsToggleRow(title: "Hide system banner", isOn: $notificationPlugin.hideWhatsAppBanner)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 groupTitle("Other Apps")
                 settingsCard {
                     settingsToggleRow(title: "Show notifications from unsupported apps", isOn: $notificationPlugin.otherAppsEnabled)
@@ -706,6 +715,9 @@ public struct SettingsWindowView: View {
                     }
                     simButton(title: "Simulate Outlook Email", icon: "envelope.fill") {
                         notificationPlugin.simulateOutlookEmail()
+                    }
+                    simButton(title: "Simulate WhatsApp", icon: "message.fill") {
+                        notificationPlugin.simulateWhatsAppMessage()
                     }
                     simButton(title: "Dump Notification Tree", icon: "doc.text.magnifyingglass") {
                         notificationPlugin.revealAccessibilityTreeDump()

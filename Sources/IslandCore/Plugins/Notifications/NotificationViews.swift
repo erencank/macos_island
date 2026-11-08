@@ -4,9 +4,19 @@ import SwiftUI
 enum NotificationAppIcon {
     @MainActor
     static func image(forAppNamed name: String) -> NSImage? {
-        NSWorkspace.shared.runningApplications
-            .first { $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame }?
-            .icon
+        let target = BannerTextCleaner.trim(name)
+        if let icon = NSWorkspace.shared.runningApplications.first(where: {
+            guard let localized = $0.localizedName else { return false }
+            return BannerTextCleaner.trim(localized).caseInsensitiveCompare(target) == .orderedSame
+        })?.icon {
+            return icon
+        }
+
+        let appPath = "/Applications/\(target).app"
+        if FileManager.default.fileExists(atPath: appPath) {
+            return NSWorkspace.shared.icon(forFile: appPath)
+        }
+        return nil
     }
 }
 
