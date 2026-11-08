@@ -42,6 +42,18 @@ public struct AirDropCompactTrailingView: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
+        case .awaitingVerificationCode:
+            HStack(spacing: 4) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.cyan)
+                Text(session.itemTitle)
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(.cyan)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
         case .transferring:
             if session.isIndeterminateProgress {
                 HStack(spacing: 5) {
@@ -113,19 +125,27 @@ public struct AirDropExpandedCardView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Image(systemName: "airplayaudio")
+                        Image(systemName: isCodeSession ? "key.fill" : "airplayaudio")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.cyan)
-                        Text(session.senderName)
+                        Text(isCodeSession ? "AirDrop Code • \(session.senderName)" : session.senderName)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.cyan)
                             .lineLimit(1)
                     }
 
-                    Text(session.itemTitle)
-                        .font(.system(size: 14.5, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
+                    if isCodeSession {
+                        Text(formattedVerificationCode)
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                            .tracking(2.5)
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    } else {
+                        Text(session.itemTitle)
+                            .font(.system(size: 14.5, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
 
                     Text(session.itemSubtitle)
                         .font(.system(size: 11.5, weight: .medium))
@@ -191,7 +211,11 @@ public struct AirDropExpandedCardView: View {
                 )
                 .frame(width: 52, height: 52)
 
-            if let img = session.previewImage {
+            if isCodeSession {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.cyan)
+            } else if let img = session.previewImage {
                 Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -212,6 +236,18 @@ public struct AirDropExpandedCardView: View {
     private var isLinkSession: Bool {
         if case .webLink = session.payloadKind { return true }
         return false
+    }
+
+    private var isCodeSession: Bool {
+        if case .verificationCode = session.payloadKind { return true }
+        return session.phase == .awaitingVerificationCode
+    }
+
+    private var formattedVerificationCode: String {
+        let digits = session.itemTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard digits.count == 6 else { return digits }
+        let mid = digits.index(digits.startIndex, offsetBy: 3)
+        return "\(digits[..<mid]) \(digits[mid...])"
     }
 
     @ViewBuilder
@@ -235,6 +271,27 @@ public struct AirDropExpandedCardView: View {
                     textColor: .black
                 ) {
                     plugin.acceptTransfer()
+                }
+            }
+
+        case .awaitingVerificationCode:
+            HStack(spacing: 10) {
+                AirDropCardActionButton(
+                    title: "Dismiss",
+                    symbolName: "xmark",
+                    fillColor: Color.white.opacity(0.12),
+                    textColor: .white.opacity(0.9)
+                ) {
+                    plugin.declineTransfer()
+                }
+
+                AirDropCardActionButton(
+                    title: "Copy Code",
+                    symbolName: "doc.on.doc.fill",
+                    fillColor: Color.cyan,
+                    textColor: .black
+                ) {
+                    plugin.copyVerificationCode()
                 }
             }
 
@@ -419,6 +476,14 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
     public let symbolName = "airplayaudio"
 
     @Published public var isEnabled: Bool = true
+    @Published public var autoExpandIncomingAlerts: Bool {
+        didSet {
+            UserDefaults.standard.set(autoExpandIncomingAlerts, forKey: "island.airdrop.autoExpandIncomingAlerts")
+            if let current = receiverService.activeSession {
+                syncSessionWithCoordinator(current)
+            }
+        }
+    }
     @Published public var autoOpenLinks: Bool {
         didSet {
             UserDefaults.standard.set(autoOpenLinks, forKey: "island.airdrop.autoOpenLinks")
@@ -449,6 +514,7 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
     public init() {
         let savedEnabled = UserDefaults.standard.object(forKey: "island.plugin.com.island.plugin.airdrop.enabled") as? Bool ?? true
         self.isEnabled = savedEnabled
+        self.autoExpandIncomingAlerts = UserDefaults.standard.object(forKey: "island.airdrop.autoExpandIncomingAlerts") as? Bool ?? true
         self.autoOpenLinks = UserDefaults.standard.object(forKey: "island.airdrop.autoOpenLinks") as? Bool ?? true
         self.replaceSystemNotification = UserDefaults.standard.object(forKey: "island.airdrop.replaceSystemNotification") as? Bool ?? true
         self.hudDuration = UserDefaults.standard.object(forKey: "island.airdrop.hudDuration") as? Double ?? 4.0
@@ -524,8 +590,22 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
                       let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
                 NSWorkspace.shared.open(downloads)
             }
+        case .verificationCode(let code):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code, forType: .string)
+            return
         }
         dismissCompletedSession()
+    }
+
+    public func copyVerificationCode() {
+        guard let session = receiverService.activeSession else { return }
+        let code: String = {
+            if case .verificationCode(let c) = session.payloadKind { return c }
+            return session.itemTitle
+        }()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
     }
 
     public func revealReceivedItemsInFinder() {
@@ -546,6 +626,10 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
 
     public func simulateIncomingLinkRequest() {
         receiverService.simulateIncomingLinkShare()
+    }
+
+    public func simulateIncomingCodeRequest() {
+        receiverService.simulateIncomingVerificationCode()
     }
 
     // MARK: - Coordinator Synchronization
@@ -576,17 +660,20 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
         let expanded = AnyView(AirDropExpandedCardView(plugin: self, session: session))
 
         // Posture logic:
-        // - `.awaitingConfirmation`: Expand immediately into the interactive card so the user can click Accept / Decline,
-        //   unless 10 seconds have elapsed without user reaction, in which case minimize to `.compactWings`.
+        // - `.awaitingConfirmation` / `.awaitingVerificationCode`: When `autoExpandIncomingAlerts` is enabled,
+        //   expand immediately into the interactive card, then minimize to `.compactWings` after 10 seconds.
+        //   When `autoExpandIncomingAlerts` is disabled, start in `.compactWings` and expand on hover/click.
         // - `.transferring` / `.completed`: Collapse to compact wings (while still allowing hover to open the full card)
+        let isAwaitingPrompt = (session.phase == .awaitingConfirmation || session.phase == .awaitingVerificationCode)
         let isMinimizedAfterTimeout = minimizedAwaitingSessionIDs.contains(session.id)
-        let targetPosture: NotchPosture = (session.phase == .awaitingConfirmation && !isMinimizedAfterTimeout)
+        let targetPosture: NotchPosture = (isAwaitingPrompt && autoExpandIncomingAlerts && !isMinimizedAfterTimeout)
             ? .expandedCard
             : .compactWings
 
         let rightWingWidth: CGFloat = {
             switch session.phase {
             case .awaitingConfirmation: return 62
+            case .awaitingVerificationCode: return 78
             case .transferring: return 68
             case .completed: return 68
             case .declined, .failed: return 36
@@ -607,17 +694,16 @@ public final class AirDropPlugin: ObservableObject, NotchPlugin {
 
         coordinator.publishPersistentActivity(payload)
 
-        // If waiting for Accept/Decline and not yet minimized, start a 10-second inactivity timer
+        // If waiting for Accept/Decline or 6-digit code entry and auto-expanded, start a 10-second inactivity timer
         // to retract the expanded card into compact wings if the user doesn't react.
-        if session.phase == .awaitingConfirmation && !isMinimizedAfterTimeout {
+        if isAwaitingPrompt && autoExpandIncomingAlerts && !isMinimizedAfterTimeout {
             let sessionID = session.id
             awaitingConfirmationMinimizeTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled, let self,
                       let current = self.receiverService.activeSession,
                       current.id == sessionID,
-                      current.phase == .awaitingConfirmation else { return }
-                // If the user is actively hovering over the card, wait until they move away
+                      (current.phase == .awaitingConfirmation || current.phase == .awaitingVerificationCode) else { return }
                 self.minimizedAwaitingSessionIDs.insert(sessionID)
                 self.syncSessionWithCoordinator(current)
             }

@@ -597,6 +597,11 @@ public struct SettingsWindowView: View {
                     )
                     rowDivider
                     settingsToggleRow(
+                        title: "Automatically expand incoming AirDrop alerts",
+                        isOn: $airDropPlugin.autoExpandIncomingAlerts
+                    )
+                    rowDivider
+                    settingsToggleRow(
                         title: "Automatically open received web links",
                         isOn: $airDropPlugin.autoOpenLinks
                     )
@@ -617,6 +622,9 @@ public struct SettingsWindowView: View {
                     }
                     simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
                         airDropPlugin.simulateIncomingLinkRequest()
+                    }
+                    simButton(title: "Simulate AirDrop Code", icon: "key.fill") {
+                        airDropPlugin.simulateIncomingCodeRequest()
                     }
                 }
             }
@@ -1129,6 +1137,9 @@ public struct SettingsWindowView: View {
                 }
                 simButton(title: "Simulate AirDrop Link", icon: "safari.fill") {
                     airDropPlugin.simulateIncomingLinkRequest()
+                }
+                simButton(title: "Simulate AirDrop Code", icon: "key.fill") {
+                    airDropPlugin.simulateIncomingCodeRequest()
                 }
                 simButton(title: "Test Bluetooth Disconnected", icon: "headphones") {
                     bluetoothPlugin.presentBluetoothEvent(

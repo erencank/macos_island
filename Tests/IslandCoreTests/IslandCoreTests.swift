@@ -201,9 +201,15 @@ struct IslandTestsRunner {
 
         // 6. Test Incoming AirDrop Receiver State Machine (Expand on Request -> Shrink to Compact Wings on Accept -> Collapse on Decline)
         await MainActor.run {
+            UserDefaults.standard.removeObject(forKey: "island.airdrop.autoExpandIncomingAlerts")
+            defer {
+                UserDefaults.standard.removeObject(forKey: "island.airdrop.autoExpandIncomingAlerts")
+            }
+
             let coordinator = NotchStateCoordinator(hoverExpandDelayMs: 50)
             let airDropPlugin = AirDropPlugin()
             airDropPlugin.isEnabled = true
+            airDropPlugin.autoExpandIncomingAlerts = true
             airDropPlugin.start(coordinator: coordinator)
 
             // Simulate incoming file transfer request -> should auto-expand to .expandedCard without hover
@@ -220,6 +226,46 @@ struct IslandTestsRunner {
             airDropPlugin.declineTransfer()
             check(airDropPlugin.receiverService.activeSession == nil, "Declining AirDrop should clear active session")
             check(coordinator.posture == .resting, "Declining AirDrop should collapse Island back to .resting")
+
+            // Test 6-digit AirDrop verification code banner parser with live AX tree string format
+            let parsedCode = AirDropReceiverService.parseAirDropVerificationCodeStrings([
+                "AirDrop Code for “Alex Rivera”, Ask Alex to enter “350896” on their device.",
+                "AirDrop Code for “Alex Rivera”",
+                "Ask Alex to enter “350896” on their device."
+            ])
+            check(parsedCode != nil, "6-digit AirDrop code banner should be recognized")
+            check(parsedCode?.sender == "Alex Rivera", "Should extract sender 'Alex Rivera' from AirDrop Code header")
+            check(parsedCode?.code == "350896", "Should extract 6-digit code '350896'")
+            check(parsedCode?.instruction == "Ask Alex to enter “350896” on their device.", "Should preserve instruction subtitle")
+
+            // Ensure regular file request banners are not mistaken for verification code banners
+            let nonCode = AirDropReceiverService.parseAirDropVerificationCodeStrings([
+                "AirDrop",
+                "cashyos-desktop would like to share a photo",
+                "Decline",
+                "Accept"
+            ])
+            check(nonCode == nil, "Standard incoming file share banner should not match verification code parser")
+
+            // Simulate incoming 6-digit verification code with autoExpandIncomingAlerts = true
+            airDropPlugin.simulateIncomingCodeRequest()
+            check(airDropPlugin.receiverService.activeSession?.phase == .awaitingVerificationCode, "Session phase should be .awaitingVerificationCode")
+            check(airDropPlugin.receiverService.activeSession?.payloadKind == .verificationCode(code: "350896"), "Payload kind should carry the 6-digit code")
+            check(coordinator.posture == .expandedCard, "Incoming 6-digit code should expand into .expandedCard when autoExpandIncomingAlerts is true")
+            check(coordinator.persistentActivity?.wingSizes.rightWidth == 78, "Compact wing width for 6-digit code should be 78pt")
+
+            // Toggling autoExpandIncomingAlerts = false should start/collapse incoming alerts to .compactWings
+            airDropPlugin.autoExpandIncomingAlerts = false
+            check(coordinator.posture == .compactWings, "Disabling autoExpandIncomingAlerts should present incoming code in .compactWings")
+
+            airDropPlugin.declineTransfer()
+            check(coordinator.posture == .resting, "Dismissing verification code session should return Island to .resting")
+
+            // Simulate incoming code when autoExpandIncomingAlerts is false from the start
+            airDropPlugin.simulateIncomingCodeRequest()
+            check(coordinator.posture == .compactWings, "Incoming code should start in .compactWings when autoExpandIncomingAlerts is false")
+            airDropPlugin.declineTransfer()
+            airDropPlugin.autoExpandIncomingAlerts = true
 
             // Test NotificationCenter AirDrop alert string parser (e.g. "cashyos-desktop would like to share a photo")
             let parsedPhoto = AirDropReceiverService.parseAirDropAlertStrings([
