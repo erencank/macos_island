@@ -226,11 +226,11 @@ public final class BatteryPowerPlugin: ObservableObject, NotchPlugin {
         let wingSizes: NotchWingSizes = {
             switch event {
             case .charging:
-                return NotchWingSizes(leftWidth: 92, rightWidth: 48)
+                return NotchWingSizes(leftWidth: 100, rightWidth: 48)
             case .lowBattery:
-                return NotchWingSizes(leftWidth: 108, rightWidth: 46)
+                return NotchWingSizes(leftWidth: 120, rightWidth: 46)
             case .lowPowerMode(let enabled, _):
-                return NotchWingSizes(leftWidth: enabled ? 114 : 94, rightWidth: 46)
+                return NotchWingSizes(leftWidth: enabled ? 128 : 102, rightWidth: 46)
             }
         }()
         let payload = NotchActivityPayload(

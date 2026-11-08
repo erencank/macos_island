@@ -6,6 +6,7 @@ import Foundation
 
 public enum AirDropTransferPhase: String, Equatable, Sendable {
     case awaitingConfirmation
+    case awaitingVerificationCode
     case transferring
     case completed
     case declined
@@ -15,6 +16,7 @@ public enum AirDropTransferPhase: String, Equatable, Sendable {
 public enum AirDropPayloadKind: Equatable, Sendable {
     case files(count: Int)
     case webLink(url: URL?)
+    case verificationCode(code: String)
 }
 
 public struct AirDropTransferSession: Identifiable, Equatable {
@@ -336,6 +338,24 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         updateSession(session)
     }
 
+    public func simulateIncomingVerificationCode() {
+        simulationTask?.cancel()
+        let code = "350896"
+        let session = AirDropTransferSession(
+            id: "sim-code-\(UUID().uuidString)",
+            senderName: "Alex’s iPhone",
+            itemTitle: code,
+            itemSubtitle: "Ask Alex to enter “\(code)” on their device.",
+            payloadKind: .verificationCode(code: code),
+            phase: .awaitingVerificationCode,
+            progress: 0.0,
+            previewImage: NSImage(systemSymbolName: "key.fill", accessibilityDescription: "AirDrop Code"),
+            completedURLs: [],
+            isSimulated: true
+        )
+        updateSession(session)
+    }
+
     private func runSimulatedAcceptFlow(for initial: AirDropTransferSession) {
         simulationTask?.cancel()
         var current = initial
@@ -537,6 +557,8 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
             switch phase {
             case .awaitingConfirmation:
                 return "wants to share \(isLinkPayload ? "a link" : (fileCount > 1 ? "\(fileCount) files" : "a file"))"
+            case .awaitingVerificationCode:
+                return "Enter code on sender's device"
             case .transferring:
                 return "Receiving via AirDrop…"
             case .completed:
@@ -681,14 +703,15 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         collectAirDropAlerts(from: axApp, depth: 0, into: &alerts)
 
         // Prioritize an incoming ask alert (one that has "would like to share" or a Decline button)
-        // over any lingering post-transfer completion banner still in NotificationCenter!
+        // or a 6-digit verification code alert over any lingering post-transfer completion banner still in NotificationCenter!
         let preferredAlert = alerts.first(where: { candidate in
             let parsed = Self.parseAirDropAlertStrings(candidate.allStrings)
+            let isCodePrompt = Self.parseAirDropVerificationCodeStrings(candidate.allStrings) != nil
             let hasDecline = candidate.buttons.contains(where: {
                 let lower = $0.title.lowercased()
                 return lower.contains("decline") || lower.contains("weiger")
             })
-            return parsed.isIncomingRequest || hasDecline
+            return parsed.isIncomingRequest || isCodePrompt || hasDecline
         }) ?? alerts.first
 
         guard let alert = preferredAlert else {
@@ -701,12 +724,12 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
             axShowInFinderElement = nil
             axBannerElement = nil
 
-            // If the banner disappeared while we were still showing `.awaitingConfirmation` (e.g., sender cancelled),
-            // clear the active session.
+            // If the banner disappeared while we were still showing `.awaitingConfirmation` or `.awaitingVerificationCode`
+            // (e.g., sender cancelled or code timed out), clear the active session.
             if let current = activeSession,
                !current.isSimulated,
                current.id.hasPrefix("ax-airdrop-"),
-               current.phase == .awaitingConfirmation {
+               (current.phase == .awaitingConfirmation || current.phase == .awaitingVerificationCode) {
                 updateSession(nil)
             }
             return
@@ -746,6 +769,34 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
         guard combinedText != lastDetectedBannerText || activeSession == nil else { return }
         lastDetectedBannerText = combinedText
 
+        // Check for a 6-digit AirDrop verification code banner first (e.g., "AirDrop Code for “Alex Rivera”")
+        if let codeInfo = Self.parseAirDropVerificationCodeStrings(alert.allStrings) {
+            if let existing = activeSession, !existing.isSimulated,
+               (existing.phase == .transferring || existing.phase == .completed) {
+                return
+            }
+
+            IslandLogger.system.info("Detected incoming AirDrop verification code alert")
+
+            let session = AirDropTransferSession(
+                id: "ax-airdrop-code-\(codeInfo.code)",
+                senderName: codeInfo.sender,
+                itemTitle: codeInfo.code,
+                itemSubtitle: codeInfo.instruction,
+                payloadKind: .verificationCode(code: codeInfo.code),
+                phase: .awaitingVerificationCode,
+                progress: 0.0,
+                previewImage: NSImage(
+                    systemSymbolName: "key.fill",
+                    accessibilityDescription: "AirDrop Code"
+                ),
+                completedURLs: [],
+                isSimulated: false
+            )
+            updateSession(session)
+            return
+        }
+
         let parsed = Self.parseAirDropAlertStrings(alert.allStrings)
 
         // Distinguish between:
@@ -776,7 +827,9 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
 
         // If we already have an active session that has been accepted (`.transferring` or `.completed`),
         // ignore repeated polls of the same ask banner while NotificationCenter is processing the Accept action!
-        if let existing = activeSession, !existing.isSimulated, existing.phase != .awaitingConfirmation {
+        if let existing = activeSession, !existing.isSimulated,
+           existing.phase != .awaitingConfirmation,
+           existing.phase != .awaitingVerificationCode {
             return
         }
 
@@ -943,6 +996,69 @@ public final class AirDropReceiverService: NSObject, ObservableObject {
             return nil
         }
         return ref as? String
+    }
+
+    /// Parses strings from a 6-digit AirDrop verification code banner, e.g.:
+    /// - `"AirDrop Code for “Alex Rivera”"`
+    /// - `"Ask Alex to enter “350896” on their device."`
+    public nonisolated static func parseAirDropVerificationCodeStrings(_ strings: [String]) -> (sender: String, code: String, instruction: String)? {
+        let joined = strings.joined(separator: "\n")
+        let lowerJoined = joined.lowercased()
+        guard lowerJoined.contains("airdrop code") || lowerJoined.contains("airdrop-code") else {
+            return nil
+        }
+
+        guard let codeRegex = try? NSRegularExpression(pattern: #"\b(\d{6})\b"#),
+              let match = codeRegex.firstMatch(in: joined, range: NSRange(joined.startIndex..., in: joined)),
+              let codeRange = Range(match.range(at: 1), in: joined) else {
+            return nil
+        }
+        let code = String(joined[codeRange])
+
+        let quoteCharset = CharacterSet(charactersIn: "\"'“”‘’«»").union(.whitespacesAndNewlines)
+        var sender = "AirDrop"
+
+        // 1. Try extracting from "AirDrop Code for “<Sender>”" or "AirDrop-code voor “<Sender>”"
+        for line in strings {
+            let markers = ["airdrop code for ", "airdrop-code voor ", "airdrop-code für "]
+            for marker in markers {
+                if let range = line.range(of: marker, options: .caseInsensitive) {
+                    var remainder = String(line[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // If the line is the combined description ("AirDrop Code for “Alex Rivera”, Ask Alex..."),
+                    // cut at the closing quote or comma before "Ask".
+                    if let closingQuoteIdx = remainder.dropFirst().firstIndex(where: { "”\"'»".contains($0) }) {
+                        remainder = String(remainder[...closingQuoteIdx])
+                    } else if let commaIdx = remainder.firstIndex(of: ",") {
+                        remainder = String(remainder[..<commaIdx])
+                    }
+                    let cleaned = remainder.trimmingCharacters(in: quoteCharset)
+                    if !cleaned.isEmpty {
+                        sender = cleaned
+                        break
+                    }
+                }
+            }
+            if sender != "AirDrop" { break }
+        }
+
+        // 2. Fallback: extract from "Ask <Sender> to enter..."
+        if sender == "AirDrop",
+           let askRegex = try? NSRegularExpression(pattern: #"(?:ask|vraag)\s+(.+?)\s+(?:to\s+enter|om\s+)"#, options: .caseInsensitive),
+           let askMatch = askRegex.firstMatch(in: joined, range: NSRange(joined.startIndex..., in: joined)),
+           let askRange = Range(askMatch.range(at: 1), in: joined) {
+            let cleaned = String(joined[askRange]).trimmingCharacters(in: quoteCharset)
+            if !cleaned.isEmpty {
+                sender = cleaned
+            }
+        }
+
+        // 3. Find the clean instruction line (e.g. "Ask Alex to enter “350896” on their device.")
+        let instructionLine = strings.first(where: { line in
+            let lower = line.lowercased()
+            return line.contains(code) && !lower.hasPrefix("airdrop code") && !lower.hasPrefix("airdrop-code")
+        }) ?? "Enter “\(code)” on sender’s device."
+
+        return (sender: sender, code: code, instruction: instructionLine)
     }
 
     /// Parses strings like `"cashyos-desktop would like to share a photo"` into sender, item title, and icon.
