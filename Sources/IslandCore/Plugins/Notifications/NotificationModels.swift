@@ -15,19 +15,28 @@ public struct BannerButton {
 public struct RawBanner {
     public let texts: [String]
     public let buttons: [BannerButton]
+    public let canReply: Bool
     public let pressBanner: () -> Bool
     public let hideBanner: () -> Void
+    public let beginReply: () -> Bool
+    public let sendReply: (String) -> Bool
 
     public init(
         texts: [String],
         buttons: [BannerButton] = [],
+        canReply: Bool = false,
         pressBanner: @escaping () -> Bool = { false },
-        hideBanner: @escaping () -> Void = {}
+        hideBanner: @escaping () -> Void = {},
+        beginReply: @escaping () -> Bool = { false },
+        sendReply: @escaping (String) -> Bool = { _ in false }
     ) {
         self.texts = texts
         self.buttons = buttons
+        self.canReply = canReply
         self.pressBanner = pressBanner
         self.hideBanner = hideBanner
+        self.beginReply = beginReply
+        self.sendReply = sendReply
     }
 
     /// Stable identity used to tell a new banner from one that was already presented.
@@ -48,6 +57,7 @@ public struct IslandNotification: Equatable, Sendable {
     public let title: String?
     public let channel: String?
     public let body: String
+    public var canReply: Bool
 
     public init(
         appName: String,
@@ -55,7 +65,8 @@ public struct IslandNotification: Equatable, Sendable {
         sender: String,
         title: String? = nil,
         channel: String? = nil,
-        body: String
+        body: String,
+        canReply: Bool = false
     ) {
         self.appName = appName
         self.kind = kind
@@ -63,6 +74,7 @@ public struct IslandNotification: Equatable, Sendable {
         self.title = title
         self.channel = channel
         self.body = body
+        self.canReply = canReply
     }
 
     public var headline: String {

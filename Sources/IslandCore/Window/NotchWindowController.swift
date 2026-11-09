@@ -105,9 +105,24 @@ public final class NotchWindowController {
             .receive(on: RunLoop.main)
             .sink { [weak self] newPosture in
                 guard let self, let panel = self.panel else { return }
-                let shouldCaptureClicks = (newPosture == .expandedCard) || self.isFileDragNearNotch
+                let shouldCaptureClicks = (newPosture == .expandedCard) || self.isFileDragNearNotch || self.coordinator.isTextInputActive
                 if panel.ignoresMouseEvents == shouldCaptureClicks {
                     panel.ignoresMouseEvents = !shouldCaptureClicks
+                }
+            }
+            .store(in: &cancellables)
+
+        coordinator.$isTextInputActive
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isActive in
+                guard let self, let panel = self.panel else { return }
+                panel.allowsKeyFocus = isActive
+                if isActive {
+                    panel.ignoresMouseEvents = false
+                    NSApp.activate(ignoringOtherApps: true)
+                    panel.makeKeyAndOrderFront(nil)
+                } else {
+                    panel.resignKey()
                 }
             }
             .store(in: &cancellables)
@@ -256,6 +271,9 @@ public final class NotchWindowController {
         // collapse immediately so their click goes straight to the underlying window.
         if isExpandedOpen, eventType == .leftMouseDown, !globalNotchRect.contains(mouseScreenPoint) {
             isCursorInsideNotch = false
+            if coordinator.isTextInputActive {
+                coordinator.isTextInputActive = false
+            }
             coordinator.handleHoverExited()
             return
         }

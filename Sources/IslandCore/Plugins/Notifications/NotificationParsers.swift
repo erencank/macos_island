@@ -33,6 +33,16 @@ enum BannerTextCleaner {
         "clear all", "wis alles", "alle löschen", "tout effacer", "borrar todo", "cancella tutto"
     ]
 
+    private static let actionChromeTexts: Set<String> = [
+        "hide details", "show details", "more actions…", "more actions...",
+        "send", "reply", "close", "options",
+        "details verbergen", "details weergeven", "meer acties…", "verstuur", "beantwoorden", "sluit"
+    ]
+
+    static func isActionChrome(_ text: String) -> Bool {
+        actionChromeTexts.contains(trim(text).lowercased())
+    }
+
     static func isRelativeTimeMarker(_ text: String) -> Bool {
         let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if lowered == "yesterday" || lowered == "gisteren" || lowered == "gestern" || lowered == "hier" { return true }
@@ -85,6 +95,7 @@ enum BannerTextCleaner {
             .filter { !$0.isEmpty }
             .filter { !buttonTitles.contains($0.lowercased()) }
             .filter { !isTimeMarker($0) }
+            .filter { !isActionChrome($0) }
             .filter { $0.caseInsensitiveCompare(appName) != .orderedSame }
 
         let loweredApp = trim(appName).lowercased()
@@ -117,7 +128,7 @@ public struct GenericNotificationParser: Sendable {
         let content = BannerTextCleaner.contentTexts(of: banner, appName: appName)
         guard let first = content.first else { return nil }
         let body = content.count > 1 ? content[content.count - 1] : ""
-        return IslandNotification(appName: appName, kind: .message, sender: first, channel: nil, body: body)
+        return IslandNotification(appName: appName, kind: .message, sender: first, channel: nil, body: body, canReply: banner.canReply)
     }
 }
 

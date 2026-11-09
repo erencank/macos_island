@@ -75,6 +75,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         }
     }
     @Published public private(set) var isCalibratingWidth: Bool = false
+    @Published public var isReplying: Bool = false
+    @Published public var replyDraft: String = ""
+    @Published public var isSendingReply: Bool = false
 
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
@@ -145,7 +148,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] hovering in
-                guard let self, !hovering, let kind = self.active?.notification.kind, kind != .incomingCall else { return }
+                guard let self, !hovering, !self.isReplying, let kind = self.active?.notification.kind, kind != .incomingCall else { return }
                 self.scheduleDismiss(after: Self.hoverExitDismissDelay)
             }
         scanner.start()
@@ -263,6 +266,10 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         if active?.notification.kind == .incomingCall, notification.kind != .incomingCall { return }
 
         dismissTask?.cancel()
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator.isTextInputActive = false
         active = ActiveNotification(payloadID: payloadID, notification: notification, banner: banner)
 
         let isCall = notification.kind == .incomingCall
@@ -333,12 +340,45 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self, let coordinator = self.coordinator else { return }
-            if coordinator.isHovering || coordinator.posture == .expandedCard { return }
+            if coordinator.isHovering || coordinator.posture == .expandedCard || self.isReplying { return }
             self.dismissCurrent()
         }
     }
 
     // MARK: - Actions
+
+    public func beginReply() {
+        dismissTask?.cancel()
+        isReplying = true
+        replyDraft = ""
+        coordinator?.isTextInputActive = true
+        _ = active?.banner?.beginReply()
+    }
+
+    public func cancelReply() {
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator?.isTextInputActive = false
+        if let active, active.notification.kind != .incomingCall {
+            scheduleDismiss(after: messageDuration)
+        }
+    }
+
+    public func submitReply() {
+        let trimmed = replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isSendingReply = true
+        let success = active?.banner?.sendReply(trimmed) ?? true
+        IslandLogger.system.info("submitReply result: \(success, privacy: .public)")
+
+        isSendingReply = false
+        isReplying = false
+        replyDraft = ""
+        coordinator?.isTextInputActive = false
+        dismissCurrent()
+    }
 
     public func openCurrent() {
         guard let active else { return }
@@ -365,6 +405,10 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissTask?.cancel()
         widthCalibrationDismissTask?.cancel()
         isCalibratingWidth = false
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator?.isTextInputActive = false
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: true)
     }

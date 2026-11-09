@@ -187,11 +187,15 @@ public final class NotificationBannerScanner {
             var texts: [String] = []
             var buttons: [BannerButton] = []
             gatherContent(from: element, depth: 0, texts: &texts, buttons: &buttons)
+            let canReply = detectCanReply(on: element, texts: texts)
             let candidate = RawBanner(
                 texts: texts,
                 buttons: buttons,
+                canReply: canReply,
                 pressBanner: { press(element) },
-                hideBanner: { NotificationBannerDismisser.hideWindow(currentWindow) }
+                hideBanner: { NotificationBannerDismisser.hideWindow(currentWindow) },
+                beginReply: { beginReply(on: element) },
+                sendReply: { text in sendReply(text, on: element) }
             )
             banners.append(candidate)
             return
@@ -293,5 +297,194 @@ public final class NotificationBannerScanner {
 
     private static func press(_ element: AXUIElement) -> Bool {
         AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+    }
+
+    // MARK: - Banner Reply Support
+
+    private static let replyKeywords: Set<String> = [
+        "reply", "beantwoorden", "répondre", "antworten", "responder", "rispondi"
+    ]
+    private static let sendKeywords: Set<String> = [
+        "send", "verstuur", "envoyer", "senden", "enviar", "invia"
+    ]
+    private static let showDetailsKeywords: Set<String> = [
+        "show details", "details weergeven", "details einblenden",
+        "afficher les détails", "ver detalles", "mostra dettagli"
+    ]
+
+    private static func detectCanReply(on bannerElement: AXUIElement, texts: [String]) -> Bool {
+        let actions = actionNames(of: bannerElement)
+        if actions.contains(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return replyKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            return true
+        }
+        if findReplyButton(in: bannerElement) != nil {
+            return true
+        }
+        if findTextArea(in: bannerElement) != nil {
+            return true
+        }
+        if actions.contains(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return sendKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            return true
+        }
+        let isKnownMessenger = texts.first.map { firstText in
+            let lowered = firstText.lowercased()
+            return lowered.contains("whatsapp")
+        } ?? false
+        if isKnownMessenger && actions.contains(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return showDetailsKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            return true
+        }
+        return false
+    }
+
+    private static func findTextArea(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        guard depth <= maxTreeDepth else { return nil }
+        if string(element, kAXRoleAttribute) == (kAXTextAreaRole as String) {
+            return element
+        }
+        for child in children(of: element) {
+            if let found = findTextArea(in: child, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private static func findReplyButton(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        guard depth <= maxTreeDepth else { return nil }
+        let role = string(element, kAXRoleAttribute)
+        if role == (kAXButtonRole as String) || role == (kAXMenuButtonRole as String) {
+            let label = [
+                string(element, kAXTitleAttribute),
+                string(element, kAXDescriptionAttribute),
+                string(element, kAXValueAttribute)
+            ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            let trimmed = BannerTextCleaner.trim(label).lowercased()
+            if replyKeywords.contains(where: { trimmed.contains($0) }) {
+                return element
+            }
+        }
+        for child in children(of: element) {
+            if let found = findReplyButton(in: child, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private static func findSendButton(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        guard depth <= maxTreeDepth else { return nil }
+        let role = string(element, kAXRoleAttribute)
+        if role == (kAXButtonRole as String) || role == (kAXMenuButtonRole as String) {
+            let label = [
+                string(element, kAXTitleAttribute),
+                string(element, kAXDescriptionAttribute),
+                string(element, kAXValueAttribute)
+            ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            let trimmed = BannerTextCleaner.trim(label).lowercased()
+            if sendKeywords.contains(where: { trimmed == $0 || trimmed.contains($0) }) {
+                return element
+            }
+        }
+        for child in children(of: element) {
+            if let found = findSendButton(in: child, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private static func actionNames(of element: AXUIElement) -> [String] {
+        var actionNamesRef: CFArray?
+        guard AXUIElementCopyActionNames(element, &actionNamesRef) == .success,
+              let names = actionNamesRef as? [String] else {
+            return []
+        }
+        return names
+    }
+
+    private static func beginReply(on bannerElement: AXUIElement) -> Bool {
+        if let existing = findTextArea(in: bannerElement) {
+            AXUIElementSetAttributeValue(existing, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            return true
+        }
+
+        let actions = actionNames(of: bannerElement)
+        if let replyAction = actions.first(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return replyKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            if AXUIElementPerformAction(bannerElement, replyAction as CFString) == .success {
+                return true
+            }
+        }
+
+        if let replyButton = findReplyButton(in: bannerElement) {
+            if press(replyButton) {
+                return true
+            }
+        }
+
+        if let detailsAction = actions.first(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return showDetailsKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            if AXUIElementPerformAction(bannerElement, detailsAction as CFString) == .success {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func sendReply(_ text: String, on bannerElement: AXUIElement) -> Bool {
+        var textArea = findTextArea(in: bannerElement)
+        if textArea == nil {
+            _ = beginReply(on: bannerElement)
+            for _ in 0..<10 {
+                Thread.sleep(forTimeInterval: 0.03)
+                textArea = findTextArea(in: bannerElement)
+                if textArea != nil { break }
+            }
+        }
+
+        guard let targetArea = textArea else {
+            IslandLogger.system.error("sendReply failed: could not locate AXTextArea in banner")
+            return false
+        }
+
+        AXUIElementSetAttributeValue(targetArea, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        let setResult = AXUIElementSetAttributeValue(targetArea, kAXValueAttribute as CFString, text as CFTypeRef)
+        guard setResult == .success else {
+            IslandLogger.system.error("sendReply failed: could not set kAXValueAttribute (error: \(setResult.rawValue))")
+            return false
+        }
+
+        if let sendButton = findSendButton(in: bannerElement) {
+            if press(sendButton) {
+                return true
+            }
+        }
+
+        let actions = actionNames(of: bannerElement)
+        if let sendAction = actions.first(where: { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return sendKeywords.contains(where: { lowered.contains($0) })
+        }) {
+            if AXUIElementPerformAction(bannerElement, sendAction as CFString) == .success {
+                return true
+            }
+        }
+
+        IslandLogger.system.error("sendReply: text was set but send action/button could not be performed")
+        return false
     }
 }
