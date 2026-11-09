@@ -354,6 +354,27 @@ struct IslandTestsRunner {
             print("  [PASS] testIncomingAndOutgoingAirDropStateMachine")
         }
 
+        // WindowController drag proximity & pasteboard isolation test
+        do {
+            let coordinator = NotchStateCoordinator()
+            let geometryMonitor = ScreenGeometryMonitor()
+            let windowController = NotchWindowController(
+                coordinator: coordinator,
+                geometryMonitor: geometryMonitor,
+                defaultExpandedContent: { AnyView(EmptyView()) }
+            )
+            var dragHoverState: Bool?
+            windowController.onFileDragHoverChanged = { active in
+                dragHoverState = active
+            }
+
+            // Stale items on NSPasteboard(name: .drag) from prior system sessions must be ignored on startup
+            check(dragHoverState == nil, "Initial drag hover state must be idle (no false dropzone trigger)")
+
+            windowController.close()
+            print("  [PASS] testWindowControllerDragSessionIsolation")
+        }
+
         // Notification parsers
         do {
             check(BannerTextCleaner.isTimeMarker("now"), "Time marker 'now'")

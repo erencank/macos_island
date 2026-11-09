@@ -17,8 +17,8 @@ public final class NotchWindowController {
     private var hoverPollTimer: Timer?
     private var isCursorInsideNotch: Bool = false
     private var isFileDragNearNotch: Bool = false
-    private var lastObservedDragChangeCount: Int = -1
-    private var cachedDragHasFiles: Bool = false
+    private var lastCompletedDragChangeCount: Int = NSPasteboard(name: .drag).changeCount
+    private var isLiveDragSessionActive: Bool = false
 
     public init(
         coordinator: NotchStateCoordinator,
@@ -79,11 +79,15 @@ public final class NotchWindowController {
         hostingView.onFileDragExited = { [weak self] in
             guard let self else { return }
             if (NSEvent.pressedMouseButtons & 1) == 0 {
+                self.lastCompletedDragChangeCount = NSPasteboard(name: .drag).changeCount
+                self.isLiveDragSessionActive = false
                 self.setFileDragNearNotch(false)
             }
         }
         hostingView.onFilesDropped = { [weak self] urls in
             guard let self else { return false }
+            self.lastCompletedDragChangeCount = NSPasteboard(name: .drag).changeCount
+            self.isLiveDragSessionActive = false
             self.setFileDragNearNotch(false)
             self.isCursorInsideNotch = true
             self.onFilesDropped?(urls)
@@ -200,21 +204,30 @@ public final class NotchWindowController {
 
     private func evaluateFileDragProximity(mouseScreenPoint: CGPoint, geo: NotchGeometry) {
         let isLeftButtonDown = (NSEvent.pressedMouseButtons & 1) != 0
+        let dragPboard = NSPasteboard(name: .drag)
+        let currentChangeCount = dragPboard.changeCount
+
         guard isLeftButtonDown else {
+            lastCompletedDragChangeCount = currentChangeCount
+            isLiveDragSessionActive = false
             if isFileDragNearNotch {
                 setFileDragNearNotch(false)
             }
             return
         }
 
-        let dragPboard = NSPasteboard(name: .drag)
-        let currentChangeCount = dragPboard.changeCount
-        if currentChangeCount != lastObservedDragChangeCount {
-            lastObservedDragChangeCount = currentChangeCount
-            cachedDragHasFiles = !NotchHitTestHostingView<AnyView>.extractFileURLs(from: dragPboard).isEmpty
+        if !isLiveDragSessionActive {
+            if currentChangeCount != lastCompletedDragChangeCount {
+                let hasFiles = !NotchHitTestHostingView<AnyView>.extractFileURLs(from: dragPboard).isEmpty
+                if hasFiles {
+                    isLiveDragSessionActive = true
+                } else {
+                    lastCompletedDragChangeCount = currentChangeCount
+                }
+            }
         }
 
-        guard cachedDragHasFiles else {
+        guard isLiveDragSessionActive else {
             if isFileDragNearNotch {
                 setFileDragNearNotch(false)
             }
