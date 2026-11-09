@@ -307,8 +307,51 @@ struct IslandTestsRunner {
             check(coordinator.persistentActivity?.pluginID == "com.island.plugin.nowplaying", "Now Playing should resume after AirDrop is dismissed")
             coordinator.clearPersistentActivity(pluginID: "com.island.plugin.nowplaying")
 
+            // Test Outgoing AirDrop Drag-to-Send & In-Island Receiver Picker lifecycle
+            let noHoverDelayCoordinator = NotchStateCoordinator(hoverExpandDelayMs: 0)
+            airDropPlugin.start(coordinator: noHoverDelayCoordinator)
+
+            // 1. Dragging files near the notch expands into .dropzoneHover (.expandedCard)
+            airDropPlugin.handleFileDragHoverChanged(true)
+            check(airDropPlugin.senderService.activeSession?.phase == .dropzoneHover, "Dragging files near notch should enter .dropzoneHover phase")
+            check(noHoverDelayCoordinator.posture == .expandedCard, "Dropzone hover should expand Island into .expandedCard")
+
+            // Dragging away without dropping returns to .resting
+            airDropPlugin.handleFileDragHoverChanged(false)
+            check(airDropPlugin.senderService.activeSession == nil, "Dragging away without dropping should clear dropzone session")
+            check(noHoverDelayCoordinator.posture == .resting, "Dragging away without dropping should collapse Island back to .resting")
+
+            // 2. Dropping files stages them in .selectingRecipient and opens .expandedCard
+            airDropPlugin.simulateOutgoingDrop()
+            check(airDropPlugin.senderService.activeSession?.phase == .selectingRecipient, "Dropping files should transition to .selectingRecipient")
+            check(airDropPlugin.senderService.activeSession?.fileURLs.count == 2, "Simulated drop should stage 2 files")
+            check(airDropPlugin.senderService.activeSession?.compactWingBadgeText == "2 Files", "Compact badge should read '2 Files'")
+            check(noHoverDelayCoordinator.posture == .expandedCard, "Dropping files should keep Island open in .expandedCard to pick a receiver")
+
+            // 3. Moving cursor away minimizes into .compactWings while keeping staged files & session alive
+            noHoverDelayCoordinator.handleHoverExited()
+            check(noHoverDelayCoordinator.posture == .compactWings, "Moving cursor away from staged outgoing AirDrop should minimize into .compactWings")
+            check(airDropPlugin.senderService.activeSession?.phase == .selectingRecipient, "Staged outgoing session must stay alive in .selectingRecipient when minimized")
+
+            // 4. Clicking/hovering back onto the Island re-expands into .expandedCard
+            noHoverDelayCoordinator.handleNotchClicked()
+            check(noHoverDelayCoordinator.posture == .expandedCard, "Returning to minimized outgoing AirDrop should re-expand into .expandedCard")
+
+            // 5. Clicking a recipient starts sending
+            if let recipient = airDropPlugin.senderService.activeSession?.recipients.first {
+                airDropPlugin.sendOutgoingToRecipient(recipient)
+                check(airDropPlugin.senderService.activeSession?.phase == .sending(recipientName: recipient.displayName), "Clicking a recipient should transition outgoing session to .sending")
+            } else {
+                check(false, "Simulated outgoing drop should provide at least one recipient")
+            }
+
+            // 6. Cancelling outgoing session clears state and returns Island to .resting
+            airDropPlugin.cancelOutgoingSession()
+            check(airDropPlugin.senderService.activeSession == nil, "Cancelling outgoing session should clear activeSession")
+            check(noHoverDelayCoordinator.posture == .resting, "Cancelling outgoing session should return Island to .resting")
+
             airDropPlugin.stop()
-            print("  [PASS] testIncomingAirDropReceiverStateMachine")
+            print("  [PASS] testIncomingAndOutgoingAirDropStateMachine")
         }
 
         // Notification parsers

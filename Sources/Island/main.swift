@@ -60,6 +60,13 @@ final class IslandAppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         )
+        let adPlugin = airDropPlugin
+        windowController.onFileDragHoverChanged = { hovering in
+            adPlugin.handleFileDragHoverChanged(hovering)
+        }
+        windowController.onFilesDropped = { urls in
+            adPlugin.handleDroppedFiles(urls)
+        }
         windowController.show()
         self.notchWindowController = windowController
 
