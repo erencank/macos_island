@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <IOBluetooth/IOBluetooth.h>
+#import <objc/message.h>
 #import <dlfcn.h>
 
 typedef void (*MRMediaRemoteGetNowPlayingInfoFn)(dispatch_queue_t queue, void (^handler)(NSDictionary *info));
@@ -200,3 +202,46 @@ void island_mr_query_now_playing_json(void) {
         fflush(stdout);
     }
 }
+
+// MARK: - AirDrop Outgoing Node Helper Functions (SFAirDropNode)
+
+CGImageRef island_airdrop_node_copy_display_icon(id node) {
+    if (!node) return NULL;
+    SEL sel = NSSelectorFromString(@"displayIcon");
+    if (![node respondsToSelector:sel]) return NULL;
+    typedef CGImageRef (*DisplayIconFn)(id, SEL);
+    DisplayIconFn fn = (DisplayIconFn)objc_msgSend;
+    CGImageRef img = fn(node, sel);
+    if (img) {
+        CGImageRetain(img);
+    }
+    return img;
+}
+
+int island_airdrop_node_start_send(
+    id node,
+    NSString *bundleID,
+    NSString *sessionID,
+    NSArray *items,
+    NSString *desc,
+    CGImageRef previewImage
+) {
+    if (!node) return 0;
+    SEL sel = NSSelectorFromString(@"startSendForBundleID:sessionID:items:description:previewImage:fromShareSheet:");
+    if (![node respondsToSelector:sel]) return 0;
+    typedef void (*StartSendFn)(id, SEL, NSString *, NSString *, NSArray *, NSString *, CGImageRef, BOOL);
+    StartSendFn fn = (StartSendFn)objc_msgSend;
+    fn(node, sel, bundleID, sessionID, items, desc, previewImage, NO);
+    return 1;
+}
+
+int island_airdrop_node_cancel_send(id node) {
+    if (!node) return 0;
+    SEL sel = NSSelectorFromString(@"cancelSend");
+    if (![node respondsToSelector:sel]) return 0;
+    typedef void (*CancelSendFn)(id, SEL);
+    CancelSendFn fn = (CancelSendFn)objc_msgSend;
+    fn(node, sel);
+    return 1;
+}
+

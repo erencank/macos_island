@@ -7,6 +7,19 @@ import SwiftUI
 /// returns `nil` in `hitTest(_:)`, making the surrounding canvas 100% click-through.
 public final class NotchHitTestHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitRectProvider: (() -> CGRect)?
+    public var onFileDragEntered: (() -> Void)?
+    public var onFileDragExited: (() -> Void)?
+    public var onFilesDropped: (([URL]) -> Bool)?
+
+    public required init(rootView: Content) {
+        super.init(rootView: rootView)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    @available(*, unavailable)
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     private func currentInteractiveRect() -> CGRect {
         guard let provider = activeHitRectProvider else {
@@ -26,6 +39,41 @@ public final class NotchHitTestHostingView<Content: View>: NSHostingView<Content
 
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    // MARK: - NSDraggingDestination
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard Self.extractFileURLs(from: sender.draggingPasteboard).isEmpty == false else {
+            return []
+        }
+        onFileDragEntered?()
+        return .copy
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard Self.extractFileURLs(from: sender.draggingPasteboard).isEmpty == false else {
+            return []
+        }
+        return .copy
+    }
+
+    public override func draggingExited(_ sender: NSDraggingInfo?) {
+        onFileDragExited?()
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.extractFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        return onFilesDropped?(urls) ?? false
+    }
+
+    public static func extractFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let classes: [AnyClass] = [NSURL.self]
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        return (pasteboard.readObjects(forClasses: classes, options: options) as? [URL]) ?? []
     }
 }
 

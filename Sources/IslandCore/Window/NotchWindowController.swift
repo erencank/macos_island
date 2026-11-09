@@ -8,11 +8,17 @@ public final class NotchWindowController {
     private let coordinator: NotchStateCoordinator
     private let geometryMonitor: ScreenGeometryMonitor
     private let defaultExpandedContent: () -> AnyView
+    public var onFileDragHoverChanged: ((Bool) -> Void)?
+    public var onFilesDropped: (([URL]) -> Void)?
+
     private var cancellables = Set<AnyCancellable>()
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var hoverPollTimer: Timer?
     private var isCursorInsideNotch: Bool = false
+    private var isFileDragNearNotch: Bool = false
+    private var lastObservedDragChangeCount: Int = -1
+    private var cachedDragHasFiles: Bool = false
 
     public init(
         coordinator: NotchStateCoordinator,
@@ -46,6 +52,9 @@ public final class NotchWindowController {
             guard let self else {
                 return .zero
             }
+            if self.isFileDragNearNotch {
+                return CGRect(x: 0, y: 0, width: NotchGeometry.canvasWidth, height: NotchGeometry.canvasHeight)
+            }
             // Only intercept mouse clicks inside the window when the expanded card is open
             // or compact wings are visible. When resting/closed, return .zero so 100% of clicks pass through.
             guard self.coordinator.posture == .expandedCard || self.coordinator.posture == .compactWings else {
@@ -64,6 +73,23 @@ public final class NotchWindowController {
             return CGRect(x: originX, y: originY, width: width, height: height)
         }
 
+        hostingView.onFileDragEntered = { [weak self] in
+            self?.setFileDragNearNotch(true)
+        }
+        hostingView.onFileDragExited = { [weak self] in
+            guard let self else { return }
+            if (NSEvent.pressedMouseButtons & 1) == 0 {
+                self.setFileDragNearNotch(false)
+            }
+        }
+        hostingView.onFilesDropped = { [weak self] urls in
+            guard let self else { return false }
+            self.setFileDragNearNotch(false)
+            self.isCursorInsideNotch = true
+            self.onFilesDropped?(urls)
+            return true
+        }
+
         // Start with ignoresMouseEvents = true when closed/resting so the transparent canvas
         // never blocks clicks on browser tabs, menu bar items, or app titlebars near the notch.
         panel.ignoresMouseEvents = (coordinator.posture != .expandedCard)
@@ -74,12 +100,12 @@ public final class NotchWindowController {
 
         // Dynamically toggle window-level click-through whenever the posture changes:
         // - When closed (.resting, .compactWings, .transientHUD): `ignoresMouseEvents = true` (zero invisible wall!)
-        // - When open (.expandedCard): `ignoresMouseEvents = false` so buttons/sliders inside the card are clickable.
+        // - When open (.expandedCard) or a file drag is hovering near the notch: `ignoresMouseEvents = false`
         coordinator.$posture
             .receive(on: RunLoop.main)
             .sink { [weak self] newPosture in
                 guard let self, let panel = self.panel else { return }
-                let shouldCaptureClicks = (newPosture == .expandedCard)
+                let shouldCaptureClicks = (newPosture == .expandedCard) || self.isFileDragNearNotch
                 if panel.ignoresMouseEvents == shouldCaptureClicks {
                     panel.ignoresMouseEvents = !shouldCaptureClicks
                 }
@@ -109,7 +135,7 @@ public final class NotchWindowController {
         stopMouseHoverTracking()
 
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged]
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.evaluateCursorLocation(eventType: event.type)
@@ -117,7 +143,7 @@ public final class NotchWindowController {
         }
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged]
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.evaluateCursorLocation(eventType: event.type)
@@ -145,9 +171,63 @@ public final class NotchWindowController {
         hoverPollTimer = nil
     }
 
+    private func setFileDragNearNotch(_ active: Bool) {
+        guard isFileDragNearNotch != active else { return }
+        isFileDragNearNotch = active
+        if let panel {
+            let shouldCaptureClicks = (coordinator.posture == .expandedCard) || active
+            if panel.ignoresMouseEvents == shouldCaptureClicks {
+                panel.ignoresMouseEvents = !shouldCaptureClicks
+            }
+        }
+        onFileDragHoverChanged?(active)
+    }
+
+    private func evaluateFileDragProximity(mouseScreenPoint: CGPoint, geo: NotchGeometry) {
+        let isLeftButtonDown = (NSEvent.pressedMouseButtons & 1) != 0
+        guard isLeftButtonDown else {
+            if isFileDragNearNotch {
+                setFileDragNearNotch(false)
+            }
+            return
+        }
+
+        let dragPboard = NSPasteboard(name: .drag)
+        let currentChangeCount = dragPboard.changeCount
+        if currentChangeCount != lastObservedDragChangeCount {
+            lastObservedDragChangeCount = currentChangeCount
+            cachedDragHasFiles = !NotchHitTestHostingView<AnyView>.extractFileURLs(from: dragPboard).isEmpty
+        }
+
+        guard cachedDragHasFiles else {
+            if isFileDragNearNotch {
+                setFileDragNearNotch(false)
+            }
+            return
+        }
+
+        let dropTriggerWidth: CGFloat = isFileDragNearNotch ? 420 : 340
+        let dropTriggerHeight: CGFloat = isFileDragNearNotch ? 235 : 120
+        let dropTriggerRect = CGRect(
+            x: geo.notchFrame.midX - (dropTriggerWidth / 2.0),
+            y: geo.screenFrame.maxY - dropTriggerHeight,
+            width: dropTriggerWidth,
+            height: dropTriggerHeight
+        )
+
+        let insideDragZone = dropTriggerRect.contains(mouseScreenPoint)
+        setFileDragNearNotch(insideDragZone)
+    }
+
     private func evaluateCursorLocation(eventType: NSEvent.EventType?) {
         let mouseScreenPoint = NSEvent.mouseLocation
         let geo = geometryMonitor.activeGeometry
+
+        evaluateFileDragProximity(mouseScreenPoint: mouseScreenPoint, geo: geo)
+        if isFileDragNearNotch {
+            return
+        }
+
         let layout = coordinator.targetLayout(
             for: geo.notchFrame.size,
             hasPhysicalNotch: geo.hasPhysicalNotch

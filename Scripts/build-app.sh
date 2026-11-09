@@ -28,6 +28,7 @@ clang -dynamiclib \
     -fobjc-arc \
     -isysroot "${SDKROOT:-$(xcrun --show-sdk-path)}" \
     -framework Foundation \
+    -framework CoreGraphics \
     -framework IOBluetooth \
     "${ROOT_DIR}/Scripts/MediaRemoteBridge.m" \
     -o "${BUILD_DIR}/libIslandMediaRemoteBridge.dylib"

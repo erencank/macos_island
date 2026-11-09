@@ -626,6 +626,9 @@ public struct SettingsWindowView: View {
                     simButton(title: "Simulate AirDrop Code", icon: "key.fill") {
                         airDropPlugin.simulateIncomingCodeRequest()
                     }
+                    simButton(title: "Simulate Outgoing Drop", icon: "arrow.up.doc.fill") {
+                        airDropPlugin.simulateOutgoingDrop()
+                    }
                 }
             }
         }
@@ -1140,6 +1143,9 @@ public struct SettingsWindowView: View {
                 }
                 simButton(title: "Simulate AirDrop Code", icon: "key.fill") {
                     airDropPlugin.simulateIncomingCodeRequest()
+                }
+                simButton(title: "Simulate Outgoing Drop", icon: "arrow.up.doc.fill") {
+                    airDropPlugin.simulateOutgoingDrop()
                 }
                 simButton(title: "Test Bluetooth Disconnected", icon: "headphones") {
                     bluetoothPlugin.presentBluetoothEvent(
