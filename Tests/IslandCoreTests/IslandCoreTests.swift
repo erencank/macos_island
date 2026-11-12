@@ -1109,8 +1109,18 @@ struct IslandTestsRunner {
             coordinator.swipeToSkipMediaEnabled = true
             coordinator.handleExpandedSwipe(.left)
             check(plugin.mediaService.lastNavCommand == .nextTrack, "Swiping left on expanded Now Playing sends nextTrack")
+            check(plugin.mediaService.latestNavigationPulse?.direction == .forward, "Swiping left emits forward navigation pulse")
             coordinator.handleExpandedSwipe(.right)
             check(plugin.mediaService.lastNavCommand == .previousTrack, "Swiping right on expanded Now Playing sends previousTrack")
+            check(plugin.mediaService.latestNavigationPulse?.direction == .backward, "Swiping right emits backward navigation pulse")
+
+            let expandedCard = NowPlayingExpandedCardView(
+                mediaService: plugin.mediaService,
+                themeStyle: plugin.themeStyle,
+                auxiliaryAction: plugin.auxiliaryAction,
+                waveformIntensity: plugin.waveformIntensity
+            )
+            _ = expandedCard.body
 
             coordinator.swipeToSkipMediaEnabled = false
             plugin.simulateTrack()

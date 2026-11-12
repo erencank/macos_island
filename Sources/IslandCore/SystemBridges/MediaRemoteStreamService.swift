@@ -18,6 +18,7 @@ public enum MediaPlaybackCommand: Int32 {
 public final class MediaRemoteStreamService: ObservableObject {
     @Published public private(set) var currentTrack: NowPlayingTrack?
     @Published public private(set) var latestTrackChange: TrackChangeEvent?
+    @Published public private(set) var latestNavigationPulse: TrackNavigationPulse?
 
     private var pollTimer: Timer?
     private var progressTickTimer: Timer?
@@ -85,6 +86,9 @@ public final class MediaRemoteStreamService: ObservableObject {
         if command == .nextTrack || command == .previousTrack {
             lastNavCommand = command
             lastNavCommandTimestamp = Date()
+            latestNavigationPulse = TrackNavigationPulse(
+                direction: command == .previousTrack ? .backward : .forward
+            )
         }
 
         if isSimulatedTrackActive, var track = currentTrack {
