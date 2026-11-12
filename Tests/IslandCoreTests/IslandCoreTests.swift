@@ -631,6 +631,19 @@ struct IslandTestsRunner {
             let parsedLocalizedSlack = parsers.parse(localizedExpandedSlack)
             check(parsedLocalizedSlack?.body == "Hallo!", "Expanded Slack body strips localized action chrome")
 
+            // Thread keys for conversation grouping
+            let slackDMThread = parsers.parse(RawBanner(texts: ["Slack, bol, Lydia van Dam, Hey", "bol", "Lydia van Dam", "Hey"]))
+            let slackChannelThread = parsers.parse(RawBanner(texts: ["Slack, bol, engineering, Bob: Build passed", "bol", "engineering", "Bob: Build passed"]))
+            let whatsAppDMThread = parsers.parse(RawBanner(texts: ["WhatsApp", "Alex", "Ping"]))
+            let whatsAppGroupNotif = parsers.parse(RawBanner(texts: ["WhatsApp", "Sam", "Weekend Plans", "Hi!"]))
+            let whatsAppCallNotif = parsers.parse(RawBanner(texts: ["WhatsApp", "Sam", "Incoming voice call"]))
+            check(slackDMThread?.threadKey == "slack|dm|lydia van dam", "Slack DM threadKey groups by sender")
+            check(slackChannelThread?.threadKey == "slack|channel|#engineering", "Slack channel threadKey groups by channel")
+            check(whatsAppDMThread?.threadKey == "whatsapp|dm|alex", "WhatsApp DM threadKey groups by sender")
+            check(whatsAppGroupNotif?.threadKey == "whatsapp|channel|weekend plans", "WhatsApp group threadKey groups by group channel")
+            check(whatsAppCallNotif?.threadKey == nil, "Incoming call has nil threadKey")
+            check(parsedOutlook?.threadKey == nil, "Outlook email has nil threadKey")
+
             print("  [PASS] testNotificationParsers")
         }
 
@@ -892,6 +905,72 @@ struct IslandTestsRunner {
             plugin.clearAllHistory()
             check(plugin.history.isEmpty, "clearAllHistory empties kept notifications")
             check(coordinator.keptNotificationCount == 0, "Coordinator badge count resets to 0")
+
+            // Test thread grouping across consecutive DMs and group messages
+            var waMsg1Sent: String?
+            var waMsg2Sent: String?
+            let waDM1 = RawBanner(
+                texts: ["WhatsApp", "Alexandre", "Boulderen?"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in waMsg1Sent = text; return true }
+            )
+            let slackGroup1 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Checking PR", "bol", "dev", "Lydia: Checking PR"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            let waDM2 = RawBanner(
+                texts: ["WhatsApp", "Alexandre", "18:30?"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in waMsg2Sent = text; return true }
+            )
+            let slackGroup2 = RawBanner(
+                texts: ["Slack, bol, dev, Bob: Looks good!", "bol", "dev", "Bob: Looks good!"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+
+            plugin.handle(banners: [waDM1])
+            plugin.handle(banners: [slackGroup1])
+            check(plugin.history.count == 2, "Two distinct conversations create 2 thread entries")
+            check(plugin.history[0].notification.channel == "#dev", "Newest conversation is Slack #dev at index 0")
+
+            // A second DM from Alexandre merges into the existing WhatsApp DM thread and moves it to top
+            plugin.handle(banners: [waDM2])
+            check(plugin.history.count == 2, "Second WhatsApp DM from same sender merges into existing thread")
+            check(plugin.history[0].notification.sender == "Alexandre", "Updated WhatsApp DM thread moves to index 0")
+            check(plugin.history[0].messages.map(\.body) == ["Boulderen?", "18:30?"], "Merged DM thread preserves chronological message bodies")
+
+            // A second message from a different sender in Slack #dev merges into the #dev thread
+            plugin.handle(banners: [slackGroup2])
+            check(plugin.history.count == 2, "Different sender in same Slack channel merges into #dev thread")
+            check(plugin.history[0].messages.map { "\($0.sender): \($0.body)" } == [
+                "Lydia: Checking PR",
+                "Bob: Looks good!"
+            ], "Merged channel thread preserves sender + body per message")
+
+            // Preserving active reply draft when a third message arrives in the same thread
+            plugin.beginReply()
+            plugin.replyDraft = "Omw!"
+            var slackMsg3Sent: String?
+            let slackGroup3 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Merging now", "bol", "dev", "Lydia: Merging now"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in slackMsg3Sent = text; return true }
+            )
+            plugin.handle(banners: [slackGroup3])
+            check(plugin.isReplying == true, "Incoming message in active reply thread preserves isReplying")
+            check(plugin.replyDraft == "Omw!", "Incoming message in active reply thread preserves replyDraft")
+            check(plugin.history[0].messages.count == 3, "Third message appended to thread while replying")
+
+            plugin.submitReply()
+            check(slackMsg3Sent == "Omw!", "submitReply uses latest live banner in the grouped thread")
+            check(waMsg1Sent == nil && waMsg2Sent == nil, "Other threads' banners were not invoked")
+
+            plugin.clearAllHistory()
             plugin.keepUntilDismissed = false
 
             plugin.stop()

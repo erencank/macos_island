@@ -84,12 +84,26 @@ public struct NotificationExpandedCardView: View {
     @ObservedObject public var plugin: NotificationBridgePlugin
     public let notification: IslandNotification
     public let entryID: String?
+    public let messages: [NotificationThreadMessage]
     @FocusState private var isFieldFocused: Bool
 
-    public init(plugin: NotificationBridgePlugin, notification: IslandNotification, entryID: String? = nil) {
+    public init(
+        plugin: NotificationBridgePlugin,
+        notification: IslandNotification,
+        entryID: String? = nil,
+        messages: [NotificationThreadMessage] = []
+    ) {
         self.plugin = plugin
         self.notification = notification
         self.entryID = entryID
+        self.messages = messages
+    }
+
+    private var displayedHeadline: String {
+        if messages.count > 1, let channel = notification.channel, !channel.isEmpty {
+            return channel
+        }
+        return notification.headline
     }
 
     public var body: some View {
@@ -114,7 +128,7 @@ public struct NotificationExpandedCardView: View {
                         }
                     }
 
-                    Text(notification.headline)
+                    Text(displayedHeadline)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
                         .lineLimit(1)
@@ -164,6 +178,36 @@ public struct NotificationExpandedCardView: View {
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if messages.count > 1 {
+            let maxVisible = plugin.isReplying ? 2 : 3
+            let recent = Array(messages.suffix(maxVisible))
+            let hiddenCount = max(0, messages.count - recent.count)
+            let showSenderNames = (notification.channel?.isEmpty == false)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if hiddenCount > 0 {
+                    Text("+\(hiddenCount) earlier")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.45))
+                }
+                ForEach(recent) { msg in
+                    if showSenderNames && !msg.sender.isEmpty {
+                        (Text("\(msg.sender): ")
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white.opacity(0.9))
+                         + Text(msg.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white.opacity(0.75)))
+                        .font(.system(size: 11.5))
+                        .lineLimit(1)
+                    } else {
+                        Text(msg.body)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(.white.opacity(0.78))
+                            .lineLimit(1)
+                    }
+                }
             }
         } else if !notification.body.isEmpty {
             Text(notification.body)

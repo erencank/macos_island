@@ -61,6 +61,7 @@ public struct IslandNotification: Equatable, Sendable {
     public let channel: String?
     public let body: String
     public var canReply: Bool
+    public let threadKey: String?
 
     public init(
         appName: String,
@@ -69,7 +70,8 @@ public struct IslandNotification: Equatable, Sendable {
         title: String? = nil,
         channel: String? = nil,
         body: String,
-        canReply: Bool = false
+        canReply: Bool = false,
+        threadKey: String? = nil
     ) {
         self.appName = appName
         self.kind = kind
@@ -78,6 +80,16 @@ public struct IslandNotification: Equatable, Sendable {
         self.channel = channel
         self.body = body
         self.canReply = canReply
+        self.threadKey = threadKey
+    }
+
+    public static func messageThreadKey(appName: String, sender: String, channel: String?) -> String? {
+        if let channel = channel?.trimmingCharacters(in: .whitespacesAndNewlines), !channel.isEmpty {
+            return "\(appName.lowercased())|channel|\(channel.lowercased())"
+        }
+        let cleanSender = sender.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanSender.isEmpty else { return nil }
+        return "\(appName.lowercased())|dm|\(cleanSender.lowercased())"
     }
 
     public var headline: String {
@@ -97,15 +109,52 @@ public struct IslandNotification: Equatable, Sendable {
     }
 }
 
-/// In-memory notification record kept while "Keep notifications until dismissed" is enabled.
-public struct NotificationHistoryEntry: Identifiable, Equatable, Sendable {
+/// Single message within a grouped chat notification thread.
+public struct NotificationThreadMessage: Identifiable, Equatable, Sendable {
     public let id: String
-    public let notification: IslandNotification
+    public let sender: String
+    public let body: String
     public let receivedAt: Date
 
-    public init(id: String = UUID().uuidString, notification: IslandNotification, receivedAt: Date = Date()) {
+    public init(id: String = UUID().uuidString, sender: String, body: String, receivedAt: Date = Date()) {
+        self.id = id
+        self.sender = sender
+        self.body = body
+        self.receivedAt = receivedAt
+    }
+
+    public init(notification: IslandNotification, receivedAt: Date = Date()) {
+        self.init(sender: notification.sender, body: notification.body, receivedAt: receivedAt)
+    }
+}
+
+/// In-memory notification record (or grouped thread) kept while "Keep notifications until dismissed" is enabled.
+public struct NotificationHistoryEntry: Identifiable, Equatable, Sendable {
+    private static let maxMessagesPerThread = 20
+
+    public let id: String
+    public let notification: IslandNotification
+    public let messages: [NotificationThreadMessage]
+    public let receivedAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        notification: IslandNotification,
+        messages: [NotificationThreadMessage]? = nil,
+        receivedAt: Date = Date()
+    ) {
         self.id = id
         self.notification = notification
+        self.messages = messages ?? [NotificationThreadMessage(notification: notification, receivedAt: receivedAt)]
         self.receivedAt = receivedAt
+    }
+
+    public func appending(_ newer: IslandNotification, at date: Date = Date()) -> NotificationHistoryEntry {
+        var updated = messages
+        updated.append(NotificationThreadMessage(notification: newer, receivedAt: date))
+        if updated.count > Self.maxMessagesPerThread {
+            updated = Array(updated.suffix(Self.maxMessagesPerThread))
+        }
+        return NotificationHistoryEntry(id: id, notification: newer, messages: updated, receivedAt: date)
     }
 }

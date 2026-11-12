@@ -43,7 +43,8 @@ public struct WhatsAppNotificationParser: AppNotificationParser {
                 sender: sender,
                 channel: channel,
                 body: body,
-                canReply: banner.canReply
+                canReply: banner.canReply,
+                threadKey: IslandNotification.messageThreadKey(appName: appName, sender: sender, channel: channel)
             )
         }
 
@@ -54,7 +55,8 @@ public struct WhatsAppNotificationParser: AppNotificationParser {
             sender: sender,
             channel: nil,
             body: body,
-            canReply: banner.canReply
+            canReply: banner.canReply,
+            threadKey: IslandNotification.messageThreadKey(appName: appName, sender: sender, channel: nil)
         )
     }
 }
