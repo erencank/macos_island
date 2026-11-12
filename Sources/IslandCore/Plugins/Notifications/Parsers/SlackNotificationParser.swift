@@ -42,7 +42,8 @@ public struct SlackNotificationParser: AppNotificationParser {
                 kind: .message,
                 sender: sender,
                 channel: channel,
-                body: body
+                body: body,
+                canReply: banner.canReply
             )
         }
 
@@ -56,7 +57,7 @@ public struct SlackNotificationParser: AppNotificationParser {
         }
 
         let sender = Self.stripLeadIn(title)
-        return IslandNotification(appName: appName, kind: .message, sender: sender, channel: channel, body: body)
+        return IslandNotification(appName: appName, kind: .message, sender: sender, channel: channel, body: body, canReply: banner.canReply)
     }
 
     private static func stripLeadIn(_ title: String) -> String {

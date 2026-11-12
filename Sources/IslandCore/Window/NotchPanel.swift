@@ -106,8 +106,10 @@ public final class NotchPanel: NSPanel {
         self.ignoresMouseEvents = false
     }
 
+    public var allowsKeyFocus: Bool = true
+
     public override var canBecomeKey: Bool {
-        true
+        allowsKeyFocus
     }
 
     public override var canBecomeMain: Bool {

@@ -28,7 +28,8 @@ public struct WhatsAppNotificationParser: AppNotificationParser {
                 kind: .incomingCall,
                 sender: sender,
                 channel: nil,
-                body: "Incoming call"
+                body: "Incoming call",
+                canReply: false
             )
         }
 
@@ -41,7 +42,8 @@ public struct WhatsAppNotificationParser: AppNotificationParser {
                 kind: .message,
                 sender: sender,
                 channel: channel,
-                body: body
+                body: body,
+                canReply: banner.canReply
             )
         }
 
@@ -51,7 +53,8 @@ public struct WhatsAppNotificationParser: AppNotificationParser {
             kind: .message,
             sender: sender,
             channel: nil,
-            body: body
+            body: body,
+            canReply: banner.canReply
         )
     }
 }

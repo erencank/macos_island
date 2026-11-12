@@ -83,6 +83,7 @@ public struct NotificationCompactTrailingView: View {
 public struct NotificationExpandedCardView: View {
     @ObservedObject public var plugin: NotificationBridgePlugin
     public let notification: IslandNotification
+    @FocusState private var isFieldFocused: Bool
 
     public init(plugin: NotificationBridgePlugin, notification: IslandNotification) {
         self.plugin = plugin
@@ -112,7 +113,11 @@ public struct NotificationExpandedCardView: View {
             }
 
             Spacer(minLength: 0)
-            actionRow
+            if plugin.isReplying {
+                replyComposerRow
+            } else {
+                actionRow
+            }
         }
         .padding(.horizontal, 8)
         .padding(.top, 2)
@@ -172,15 +177,69 @@ public struct NotificationExpandedCardView: View {
                 }
             }
         case .message, .email:
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 NotificationActionButton(title: "Dismiss", symbolName: "xmark", fill: .white.opacity(0.12), text: .white) {
                     plugin.dismissCurrent()
+                }
+                if notification.canReply {
+                    NotificationActionButton(title: "Reply", symbolName: "arrowshape.turn.up.left.fill", fill: .white.opacity(0.2), text: .white) {
+                        plugin.beginReply()
+                    }
                 }
                 NotificationActionButton(title: "Open", symbolName: "arrow.up.right.square.fill", fill: .white, text: .black) {
                     plugin.openCurrent()
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var replyComposerRow: some View {
+        HStack(spacing: 8) {
+            Button(action: { plugin.cancelReply() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 19))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+            .buttonStyle(.plain)
+            .help("Cancel reply")
+
+            TextField("Reply to \(notification.sender)…", text: $plugin.replyDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5, weight: .regular))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
+                .focused($isFieldFocused)
+                .onSubmit {
+                    plugin.submitReply()
+                }
+
+            Button(action: { plugin.submitReply() }) {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(canSubmitReply ? .black : .white.opacity(0.35))
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(canSubmitReply ? Color.white : Color.white.opacity(0.1))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmitReply)
+        }
+        .onAppear {
+            isFieldFocused = true
+        }
+    }
+
+    private var canSubmitReply: Bool {
+        !plugin.replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !plugin.isSendingReply
     }
 }
 

@@ -25,10 +25,10 @@ public struct TeamsNotificationParser: AppNotificationParser {
 
         if isCall {
             let caller = Self.callerName(from: first)
-            return IslandNotification(appName: appName, kind: .incomingCall, sender: caller, channel: nil, body: "Incoming call")
+            return IslandNotification(appName: appName, kind: .incomingCall, sender: caller, channel: nil, body: "Incoming call", canReply: false)
         }
         let body = content.count > 1 ? content[content.count - 1] : ""
-        return IslandNotification(appName: appName, kind: .message, sender: first, channel: nil, body: body)
+        return IslandNotification(appName: appName, kind: .message, sender: first, channel: nil, body: body, canReply: banner.canReply)
     }
 
     private static func callerName(from text: String) -> String {

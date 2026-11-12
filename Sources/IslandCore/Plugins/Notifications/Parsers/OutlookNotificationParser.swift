@@ -31,7 +31,8 @@ public struct OutlookNotificationParser: AppNotificationParser {
             sender: sender,
             title: subject,
             channel: nil,
-            body: preview
+            body: preview,
+            canReply: false
         )
     }
 }

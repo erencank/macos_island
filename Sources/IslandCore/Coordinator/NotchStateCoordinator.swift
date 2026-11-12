@@ -117,6 +117,23 @@ public final class NotchStateCoordinator: ObservableObject {
     /// Active visual calibration mode shown in the notch when adjusting Tuning sliders in Settings
     @Published public private(set) var activeTuningAxis: NotchTuningAxis?
 
+    /// When true, an interactive text input (e.g. notification reply) is active in the expanded card.
+    /// Locks the card in `.expandedCard` posture and disables hover collapse until submitted, cancelled, or clicked outside.
+    @Published public var isTextInputActive: Bool = false {
+        didSet {
+            guard oldValue != isTextInputActive else { return }
+            if isTextInputActive {
+                withAnimation(IslandSprings.expand) {
+                    posture = .expandedCard
+                }
+            } else if !isHovering {
+                withAnimation(IslandSprings.collapse) {
+                    recalculatePosture()
+                }
+            }
+        }
+    }
+
     /// Configurable hover delay in milliseconds (default 50ms)
     @Published public var hoverExpandDelayMs: Double {
         didSet {
@@ -351,6 +368,7 @@ public final class NotchStateCoordinator: ObservableObject {
     public func handleHoverExited() {
         hoverExpandTask?.cancel()
         isHovering = false
+        if isTextInputActive { return }
         withAnimation(IslandSprings.collapse) {
             isPressTensionActive = false
             recalculatePosture()
@@ -367,6 +385,11 @@ public final class NotchStateCoordinator: ObservableObject {
     }
 
     private func recalculatePosture() {
+        if isTextInputActive {
+            posture = .expandedCard
+            return
+        }
+
         if isHovering && !isPressTensionActive {
             posture = .expandedCard
             return

@@ -571,6 +571,37 @@ struct IslandTestsRunner {
 
             check(parsers.parse(RawBanner(texts: ["Mail", "Eve", "Hello"])) == nil, "Unknown apps are not handled by app parsers")
             check(parsers.parseGeneric(RawBanner(texts: ["Mail", "Eve", "Hello"]))?.appName == "Mail", "Generic parser should use first text as app name")
+
+            // Inline reply parsing & chrome filtering
+            let expandedWhatsAppReply = RawBanner(
+                texts: [
+                    "WhatsApp, ~ Alexandre, Boulderen , 18:30?",
+                    "~ Alexandre",
+                    "Boulderen ",
+                    "18:30?",
+                    "More Actions…",
+                    "Hide Details",
+                    "Send"
+                ],
+                canReply: true
+            )
+            let parsedWhatsApp = parsers.parse(expandedWhatsAppReply)
+            check(parsedWhatsApp?.canReply == true, "Parsed WhatsApp notification inherits canReply")
+            check(parsedWhatsApp?.sender == "~ Alexandre", "Expanded WhatsApp sender parsed cleanly without chrome")
+            check(parsedWhatsApp?.body == "18:30?", "Expanded WhatsApp body parsed cleanly without Send or Hide Details chrome")
+
+            let outlookWithDetails = RawBanner(
+                texts: [
+                    "Microsoft Outlook, Team Standup, Alex, Meeting in 10m",
+                    "Team Standup",
+                    "Alex",
+                    "Meeting in 10m"
+                ],
+                canReply: false
+            )
+            let parsedOutlook = parsers.parse(outlookWithDetails)
+            check(parsedOutlook?.canReply == false, "Outlook email notification is never replyable")
+
             print("  [PASS] testNotificationParsers")
         }
 
@@ -704,6 +735,48 @@ struct IslandTestsRunner {
             plugin.triggerWidthPreview(isEditing: false)
             check(plugin.isCalibratingWidth == false, "Stopping width preview resets calibrating state")
             plugin.dismissCurrent()
+
+            // Test inline reply lifecycle
+            var beginReplyCalled = false
+            var replySentText: String?
+            let replyableBanner = RawBanner(
+                texts: ["Slack", "Alex", "Can you review this?"],
+                canReply: true,
+                beginReply: {
+                    beginReplyCalled = true
+                    return true
+                },
+                sendReply: { text in
+                    replySentText = text
+                    return true
+                }
+            )
+            plugin.handle(banners: [replyableBanner])
+            check(coordinator.persistentActivity != nil, "Replyable banner should publish persistent activity")
+
+            // Begin reply
+            plugin.beginReply()
+            check(plugin.isReplying == true, "beginReply sets isReplying to true")
+            check(coordinator.isTextInputActive == true, "beginReply activates isTextInputActive on coordinator")
+            check(beginReplyCalled == true, "beginReply invokes banner.beginReply closure")
+
+            // Hover exit should NOT collapse while isTextInputActive is true
+            coordinator.handleHoverExited()
+            check(coordinator.posture == .expandedCard, "Expanded card remains open when hover exits during text input")
+
+            // Cancel reply
+            plugin.cancelReply()
+            check(plugin.isReplying == false, "cancelReply sets isReplying to false")
+            check(coordinator.isTextInputActive == false, "cancelReply deactivates isTextInputActive on coordinator")
+
+            // Begin reply again and submit
+            plugin.beginReply()
+            plugin.replyDraft = "  LGTM!  "
+            plugin.submitReply()
+            check(replySentText == "LGTM!", "submitReply trims and delivers reply text to banner.sendReply")
+            check(plugin.isReplying == false, "submitReply resets isReplying to false")
+            check(coordinator.isTextInputActive == false, "submitReply resets isTextInputActive to false")
+            check(coordinator.persistentActivity == nil, "submitReply dismisses current active notification")
 
             plugin.stop()
             print("  [PASS] testNotificationBridgePlugin")
