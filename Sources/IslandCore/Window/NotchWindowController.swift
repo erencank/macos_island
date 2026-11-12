@@ -19,6 +19,10 @@ public final class NotchWindowController {
     private var isFileDragNearNotch: Bool = false
     private var lastCompletedDragChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private var isLiveDragSessionActive: Bool = false
+    private var scrollDeltaX: CGFloat = 0
+    private var scrollDeltaY: CGFloat = 0
+    private var didTriggerScrollGesture: Bool = false
+    private var lastDiscreteScrollAt: Date = .distantPast
 
     public init(
         coordinator: NotchStateCoordinator,
@@ -162,10 +166,15 @@ public final class NotchWindowController {
         }
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel]
         ) { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.evaluateCursorLocation(eventType: event.type)
+                guard let self else { return }
+                if event.type == .scrollWheel {
+                    self.handleScrollWheelEvent(event)
+                } else {
+                    self.evaluateCursorLocation(eventType: event.type)
+                }
             }
             return event
         }
@@ -188,6 +197,56 @@ public final class NotchWindowController {
         }
         hoverPollTimer?.invalidate()
         hoverPollTimer = nil
+    }
+
+    private func handleScrollWheelEvent(_ event: NSEvent) {
+        guard coordinator.posture == .expandedCard,
+              event.window === panel,
+              event.momentumPhase == [] else { return }
+
+        if event.phase == .began {
+            scrollDeltaX = 0
+            scrollDeltaY = 0
+            didTriggerScrollGesture = false
+        }
+
+        if event.phase == .ended || event.phase == .cancelled {
+            scrollDeltaX = 0
+            scrollDeltaY = 0
+            didTriggerScrollGesture = false
+            return
+        }
+
+        guard !didTriggerScrollGesture else { return }
+
+        if event.phase == [] {
+            let now = Date()
+            guard now.timeIntervalSince(lastDiscreteScrollAt) >= 0.22 else { return }
+            let dy = event.scrollingDeltaY
+            let dx = event.scrollingDeltaX
+            guard abs(dy) >= 2 || abs(dx) >= 2 else { return }
+            lastDiscreteScrollAt = now
+            dispatchScrollSwipe(dx: dx, dy: dy, inverted: event.isDirectionInvertedFromDevice)
+            return
+        }
+
+        scrollDeltaX += event.scrollingDeltaX
+        scrollDeltaY += event.scrollingDeltaY
+
+        let threshold: CGFloat = 24
+        guard abs(scrollDeltaY) >= threshold || abs(scrollDeltaX) >= threshold else { return }
+        didTriggerScrollGesture = true
+        dispatchScrollSwipe(dx: scrollDeltaX, dy: scrollDeltaY, inverted: event.isDirectionInvertedFromDevice)
+    }
+
+    private func dispatchScrollSwipe(dx: CGFloat, dy: CGFloat, inverted: Bool) {
+        let physicalY = inverted ? dy : -dy
+        let physicalX = inverted ? dx : -dx
+        if abs(physicalY) >= abs(physicalX) {
+            coordinator.handleExpandedSwipe(physicalY > 0 ? .down : .up)
+        } else {
+            coordinator.handleExpandedSwipe(physicalX > 0 ? .right : .left)
+        }
     }
 
     private func setFileDragNearNotch(_ active: Bool) {

@@ -192,6 +192,7 @@ public final class NotificationBannerScanner {
                 texts: texts,
                 buttons: buttons,
                 canReply: canReply,
+                isBannerAlive: { string(element, kAXRoleAttribute) != nil },
                 pressBanner: { pressBanner(element, window: currentWindow) },
                 hideBanner: { NotificationBannerDismisser.hideWindow(currentWindow) },
                 beginReply: { beginReply(on: element) },

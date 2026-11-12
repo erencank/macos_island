@@ -83,11 +83,13 @@ public struct NotificationCompactTrailingView: View {
 public struct NotificationExpandedCardView: View {
     @ObservedObject public var plugin: NotificationBridgePlugin
     public let notification: IslandNotification
+    public let entryID: String?
     @FocusState private var isFieldFocused: Bool
 
-    public init(plugin: NotificationBridgePlugin, notification: IslandNotification) {
+    public init(plugin: NotificationBridgePlugin, notification: IslandNotification, entryID: String? = nil) {
         self.plugin = plugin
         self.notification = notification
+        self.entryID = entryID
     }
 
     public var body: some View {
@@ -99,10 +101,19 @@ public struct NotificationExpandedCardView: View {
                     .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(notification.appName)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.6))
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(notification.appName)
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.6))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 4)
+
+                        if plugin.keepUntilDismissed && !plugin.isReplying && !plugin.history.isEmpty {
+                            historyPager
+                        }
+                    }
+
                     Text(notification.headline)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
@@ -181,7 +192,7 @@ public struct NotificationExpandedCardView: View {
                 NotificationActionButton(title: "Dismiss", symbolName: "xmark", fill: .white.opacity(0.12), text: .white) {
                     plugin.dismissCurrent()
                 }
-                if notification.canReply {
+                if plugin.canReply(to: notification, entryID: entryID) {
                     NotificationActionButton(title: "Reply", symbolName: "arrowshape.turn.up.left.fill", fill: .white.opacity(0.2), text: .white) {
                         plugin.beginReply()
                     }
@@ -189,6 +200,69 @@ public struct NotificationExpandedCardView: View {
                 NotificationActionButton(title: "Open", symbolName: "arrow.up.right.square.fill", fill: .white, text: .black) {
                     plugin.openCurrent()
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var historyPager: some View {
+        let total = plugin.history.count
+        let currentIndex = plugin.isBrowsingHistory ? plugin.selectedHistoryIndex : 0
+        let canGoNewer = plugin.isBrowsingHistory && currentIndex > 0
+        let canGoOlder = currentIndex + 1 < total
+
+        HStack(spacing: 6) {
+            if total > 1 {
+                HStack(spacing: 4) {
+                    Button {
+                        plugin.showPreviousNotification()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.white.opacity(canGoNewer ? 0.85 : 0.25))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoNewer)
+
+                    Text("\(currentIndex + 1)/\(total)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.7))
+
+                    Button {
+                        plugin.showNextNotification()
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.white.opacity(canGoOlder ? 0.85 : 0.25))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoOlder)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Capsule(style: .continuous).fill(Color.white.opacity(0.1)))
+
+                Button {
+                    plugin.clearAllHistory()
+                } label: {
+                    Text("Clear")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            } else if plugin.isBrowsingHistory {
+                Button {
+                    plugin.closeHistory()
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .help("Back")
             }
         }
     }

@@ -78,6 +78,20 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     @Published public var isReplying: Bool = false
     @Published public var replyDraft: String = ""
     @Published public var isSendingReply: Bool = false
+    @Published public var keepUntilDismissed: Bool {
+        didSet {
+            UserDefaults.standard.set(keepUntilDismissed, forKey: Self.keepUntilDismissedKey)
+            if !keepUntilDismissed {
+                clearHistoryExceptActive()
+            } else if let active, active.notification.kind != .incomingCall, !isCalibratingWidth {
+                recordInHistory(active.notification, banner: active.banner, entryID: active.payloadID)
+            }
+            syncCoordinatorBadgeCount()
+        }
+    }
+    @Published public private(set) var history: [NotificationHistoryEntry] = []
+    @Published public private(set) var selectedHistoryIndex: Int = 0
+    @Published public private(set) var isBrowsingHistory: Bool = false
 
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
@@ -90,8 +104,10 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private static let otherAppsKey = "island.notifications.otherApps"
     private static let durationKey = "island.notifications.messageDuration"
     private static let maxWingWidthKey = "island.notifications.maxWingWidth"
+    private static let keepUntilDismissedKey = "island.notifications.keepUntilDismissed"
     private static let hoverExitDismissDelay: TimeInterval = 1.5
     private static let duplicateWindow: TimeInterval = 3.0
+    private static let maxHistoryCount = 50
     private static let ignoredAppNames: Set<String> = ["airdrop", "island"]
 
     private struct ActiveNotification {
@@ -106,9 +122,11 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     private var presentedKeys = Set<String>()
     private var recentSignatures: [String: Date] = [:]
     private var active: ActiveNotification?
+    private var bannersByEntryID: [String: RawBanner] = [:]
     private var dismissTask: Task<Void, Never>?
     private var widthCalibrationDismissTask: Task<Void, Never>?
     private var hoverCancellable: AnyCancellable?
+    private var postureCancellable: AnyCancellable?
 
     public init() {
         let defaults = UserDefaults.standard
@@ -125,6 +143,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         let savedDuration = defaults.object(forKey: Self.durationKey) as? Double ?? 4.0
         messageDuration = max(1.0, min(15.0, savedDuration))
         maxWingWidth = defaults.object(forKey: Self.maxWingWidthKey) as? Double ?? 185.0
+        keepUntilDismissed = defaults.object(forKey: Self.keepUntilDismissedKey) as? Bool ?? false
 
         scanner.onBannersChanged = { [weak self] banners in
             self?.handle(banners: banners)
@@ -148,9 +167,25 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] hovering in
-                guard let self, !hovering, !self.isReplying, let kind = self.active?.notification.kind, kind != .incomingCall else { return }
+                guard let self, !hovering, !self.isReplying, !self.isBrowsingHistory,
+                      let kind = self.active?.notification.kind, kind != .incomingCall else { return }
                 self.scheduleDismiss(after: Self.hoverExitDismissDelay)
             }
+        postureCancellable?.cancel()
+        postureCancellable = coordinator.$posture
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] newPosture in
+                guard let self, self.isBrowsingHistory, newPosture != .expandedCard else { return }
+                self.closeHistory()
+            }
+        coordinator.onOpenKeptNotifications = { [weak self] in
+            self?.openHistory(at: 0)
+        }
+        coordinator.onExpandedSwipe = { [weak self] direction in
+            self?.handleExpandedSwipe(direction)
+        }
+        syncCoordinatorBadgeCount()
         scanner.start()
     }
 
@@ -158,8 +193,16 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         scanner.stop()
         dismissTask?.cancel()
         hoverCancellable?.cancel()
+        postureCancellable?.cancel()
+        coordinator?.onOpenKeptNotifications = nil
+        coordinator?.onExpandedSwipe = nil
+        coordinator?.keptNotificationCount = 0
         presentedKeys = []
         recentSignatures = [:]
+        bannersByEntryID = [:]
+        history = []
+        selectedHistoryIndex = 0
+        isBrowsingHistory = false
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id)
     }
@@ -197,11 +240,12 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             guard let notification = parsed else { continue }
             if isReplying, let active, signature(for: active.notification) == signature(for: notification) {
                 self.active = ActiveNotification(payloadID: active.payloadID, notification: active.notification, banner: banner)
+                bannersByEntryID[active.payloadID] = banner
                 continue
             }
             guard !isRecentDuplicate(notification) else { continue }
             if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
-            present(notification, banner: banner, payloadID: banner.key)
+            present(notification, banner: banner, payloadID: "\(banner.key)-\(UUID().uuidString)")
         }
 
         scanner.allowOnscreenForCurrentBanner = anyVisibleBanner && !anyHiddenBanner
@@ -278,8 +322,13 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         isReplying = false
         replyDraft = ""
         isSendingReply = false
+        isBrowsingHistory = false
         coordinator.isTextInputActive = false
         active = ActiveNotification(payloadID: payloadID, notification: notification, banner: banner)
+
+        if keepUntilDismissed && !isCalibratingWidth && notification.kind != .incomingCall {
+            recordInHistory(notification, banner: banner, entryID: payloadID)
+        }
 
         let isCall = notification.kind == .incomingCall
         let rightWidth = forcedRightWingWidth ?? (isCall ? 44 : Self.messageWingWidth(for: notification, maxAllowedWidth: maxWingWidth))
@@ -291,7 +340,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: rightWidth),
             compactLeadingView: AnyView(NotificationCompactLeadingView(notification: notification)),
             compactTrailingView: AnyView(NotificationCompactTrailingView(notification: notification)),
-            expandedView: AnyView(NotificationExpandedCardView(plugin: self, notification: notification)),
+            expandedView: AnyView(NotificationExpandedCardView(plugin: self, notification: notification, entryID: payloadID)),
             accentColor: isCall ? .green : .white
         )
         coordinator.publishPersistentActivity(payload)
@@ -349,9 +398,179 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self, let coordinator = self.coordinator else { return }
-            if coordinator.isHovering || coordinator.posture == .expandedCard || self.isReplying { return }
-            self.dismissCurrent()
+            if coordinator.isHovering || coordinator.posture == .expandedCard || self.isReplying || self.isBrowsingHistory { return }
+            self.collapseToast()
         }
+    }
+
+    // MARK: - History & Swipe Navigation
+
+    private func recordInHistory(_ notification: IslandNotification, banner: RawBanner?, entryID: String) {
+        history.removeAll { $0.id == entryID }
+        history.insert(NotificationHistoryEntry(id: entryID, notification: notification), at: 0)
+        if let banner {
+            bannersByEntryID[entryID] = banner
+        }
+        if history.count > Self.maxHistoryCount {
+            let evicted = history.dropFirst(Self.maxHistoryCount)
+            for item in evicted {
+                bannersByEntryID.removeValue(forKey: item.id)
+            }
+            history = Array(history.prefix(Self.maxHistoryCount))
+        }
+        selectedHistoryIndex = 0
+        syncCoordinatorBadgeCount()
+    }
+
+    private func clearHistoryExceptActive() {
+        let activeID = active?.payloadID
+        history.removeAll { $0.id != activeID }
+        if let activeID {
+            bannersByEntryID = bannersByEntryID.filter { $0.key == activeID }
+        } else {
+            bannersByEntryID.removeAll()
+        }
+        selectedHistoryIndex = 0
+        if isBrowsingHistory {
+            closeHistory()
+        }
+        syncCoordinatorBadgeCount()
+    }
+
+    private func syncCoordinatorBadgeCount() {
+        coordinator?.keptNotificationCount = keepUntilDismissed ? history.count : 0
+    }
+
+    public func openHistory(at index: Int = 0) {
+        guard keepUntilDismissed, !history.isEmpty, let coordinator else { return }
+        dismissTask?.cancel()
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator.isTextInputActive = false
+
+        let clamped = max(0, min(index, history.count - 1))
+        selectedHistoryIndex = clamped
+        isBrowsingHistory = true
+
+        let entry = history[clamped]
+        let payload = NotchActivityPayload(
+            id: "history-\(entry.id)",
+            pluginID: id,
+            priority: .high,
+            posture: .expandedCard,
+            wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: 98),
+            compactLeadingView: AnyView(NotificationCompactLeadingView(notification: entry.notification)),
+            compactTrailingView: AnyView(NotificationCompactTrailingView(notification: entry.notification)),
+            expandedView: AnyView(NotificationExpandedCardView(plugin: self, notification: entry.notification, entryID: entry.id)),
+            accentColor: .white
+        )
+        coordinator.publishPersistentActivity(payload)
+    }
+
+    public func closeHistory() {
+        guard isBrowsingHistory else { return }
+        isBrowsingHistory = false
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator?.isTextInputActive = false
+        active = nil
+        coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: false)
+    }
+
+    public func showNextNotification() {
+        guard keepUntilDismissed, !history.isEmpty else { return }
+        if !isBrowsingHistory {
+            if active != nil, history.count > 1 {
+                openHistory(at: 1)
+            } else if active == nil {
+                openHistory(at: 0)
+            }
+            return
+        }
+        let nextIndex = selectedHistoryIndex + 1
+        guard nextIndex < history.count else { return }
+        openHistory(at: nextIndex)
+    }
+
+    public func showPreviousNotification() {
+        guard keepUntilDismissed, isBrowsingHistory else { return }
+        if selectedHistoryIndex > 0 {
+            openHistory(at: selectedHistoryIndex - 1)
+        } else {
+            closeHistory()
+        }
+    }
+
+    public func clearAllHistory() {
+        history.removeAll()
+        bannersByEntryID.removeAll()
+        selectedHistoryIndex = 0
+        syncCoordinatorBadgeCount()
+        if isBrowsingHistory || active != nil {
+            isBrowsingHistory = false
+            isReplying = false
+            replyDraft = ""
+            isSendingReply = false
+            coordinator?.isTextInputActive = false
+            active = nil
+            coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: true)
+        }
+    }
+
+    public func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
+        guard keepUntilDismissed, !isReplying else { return }
+        let isViewingNotifications = isBrowsingHistory || (
+            active != nil
+                && active?.notification.kind != .incomingCall
+                && coordinator?.persistentActivity?.pluginID == id
+        )
+        if !isViewingNotifications {
+            if direction == .down, !history.isEmpty {
+                openHistory(at: 0)
+            }
+            return
+        }
+        switch direction {
+        case .down, .left:
+            showNextNotification()
+        case .up:
+            showPreviousNotification()
+        case .right:
+            if isBrowsingHistory && selectedHistoryIndex > 0 {
+                showPreviousNotification()
+            }
+        }
+    }
+
+    public func canReply(to notification: IslandNotification, entryID: String?) -> Bool {
+        guard notification.canReply else { return false }
+        if let banner = (entryID.flatMap { bannersByEntryID[$0] }) ?? active?.banner {
+            return banner.isBannerAlive()
+        }
+        return true
+    }
+
+    private var displayedEntryID: String? {
+        if isBrowsingHistory, history.indices.contains(selectedHistoryIndex) {
+            return history[selectedHistoryIndex].id
+        }
+        return active?.payloadID
+    }
+
+    private var displayedNotification: IslandNotification? {
+        if isBrowsingHistory, history.indices.contains(selectedHistoryIndex) {
+            return history[selectedHistoryIndex].notification
+        }
+        return active?.notification
+    }
+
+    private var displayedBanner: RawBanner? {
+        if isBrowsingHistory, history.indices.contains(selectedHistoryIndex) {
+            return bannersByEntryID[history[selectedHistoryIndex].id]
+        }
+        return active?.banner
     }
 
     // MARK: - Actions
@@ -361,7 +580,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         isReplying = true
         replyDraft = ""
         coordinator?.isTextInputActive = true
-        _ = active?.banner?.beginReply()
+        _ = displayedBanner?.beginReply()
     }
 
     public func cancelReply() {
@@ -369,7 +588,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         replyDraft = ""
         isSendingReply = false
         coordinator?.isTextInputActive = false
-        if let active, active.notification.kind != .incomingCall {
+        if !isBrowsingHistory, let active, active.notification.kind != .incomingCall {
             scheduleDismiss(after: messageDuration)
         }
     }
@@ -379,7 +598,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         guard !trimmed.isEmpty else { return }
 
         isSendingReply = true
-        let success = active?.banner?.sendReply(trimmed) ?? true
+        let success = displayedBanner?.sendReply(trimmed) ?? true
         IslandLogger.system.info("submitReply result: \(success, privacy: .public)")
 
         isSendingReply = false
@@ -390,11 +609,11 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     }
 
     public func openCurrent() {
-        guard let active else { return }
-        let opened = active.banner?.pressBanner() ?? false
+        guard let notification = displayedNotification else { return }
+        let opened = displayedBanner?.pressBanner() ?? false
         if !opened {
             IslandLogger.system.info("pressBanner failed or unavailable; falling back to app activation")
-            activateApp(named: active.notification.appName)
+            activateApp(named: notification.appName)
         }
         dismissCurrent()
     }
@@ -413,6 +632,20 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissCurrent()
     }
 
+    private func collapseToast() {
+        dismissTask?.cancel()
+        widthCalibrationDismissTask?.cancel()
+        isCalibratingWidth = false
+        isReplying = false
+        replyDraft = ""
+        isSendingReply = false
+        coordinator?.isTextInputActive = false
+        active = nil
+        if !isBrowsingHistory {
+            coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: false)
+        }
+    }
+
     public func dismissCurrent() {
         dismissTask?.cancel()
         widthCalibrationDismissTask?.cancel()
@@ -421,6 +654,23 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         replyDraft = ""
         isSendingReply = false
         coordinator?.isTextInputActive = false
+
+        if let removedID = displayedEntryID {
+            history.removeAll { $0.id == removedID }
+            bannersByEntryID.removeValue(forKey: removedID)
+            syncCoordinatorBadgeCount()
+        }
+
+        if isBrowsingHistory {
+            active = nil
+            if !history.isEmpty {
+                let nextIndex = min(selectedHistoryIndex, history.count - 1)
+                openHistory(at: nextIndex)
+                return
+            }
+            isBrowsingHistory = false
+        }
+
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id, forceCollapseHover: true)
     }

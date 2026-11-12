@@ -285,9 +285,40 @@ public struct NotchCanvasView: View {
             }
 
         case .expandedCard:
+            let showKeptBadge = coordinator.keptNotificationCount > 0
+                && coordinator.persistentActivity?.pluginID != "com.island.plugin.notifications"
+            let headerHeight: CGFloat = hasPhysicalNotch
+                ? max(baseNotchSize.height + 2, 36)
+                : (showKeptBadge ? 28 : 14)
+
             VStack(spacing: 0) {
-                Spacer()
-                    .frame(height: hasPhysicalNotch ? max(baseNotchSize.height + 2, 36) : 14)
+                ZStack(alignment: .trailing) {
+                    Spacer()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: headerHeight)
+
+                    if showKeptBadge {
+                        Button {
+                            coordinator.onOpenKeptNotifications?()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bell.badge.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("\(coordinator.keptNotificationCount)")
+                                    .font(.system(size: 10.5, weight: .bold))
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            }
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.14)))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 8)
+                        .padding(.top, hasPhysicalNotch ? 4 : 6)
+                    }
+                }
 
                 if let expanded = coordinator.persistentActivity?.expandedView {
                     expanded
@@ -300,6 +331,18 @@ public struct NotchCanvasView: View {
                 }
             }
             .padding(.bottom, 22)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 26)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if abs(dy) >= abs(dx) {
+                            coordinator.handleExpandedSwipe(dy > 0 ? .down : .up)
+                        } else {
+                            coordinator.handleExpandedSwipe(dx > 0 ? .right : .left)
+                        }
+                    }
+            )
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
         }
     }

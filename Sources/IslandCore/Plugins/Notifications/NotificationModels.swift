@@ -16,6 +16,7 @@ public struct RawBanner {
     public let texts: [String]
     public let buttons: [BannerButton]
     public let canReply: Bool
+    public let isBannerAlive: () -> Bool
     public let pressBanner: () -> Bool
     public let hideBanner: () -> Void
     public let beginReply: () -> Bool
@@ -25,6 +26,7 @@ public struct RawBanner {
         texts: [String],
         buttons: [BannerButton] = [],
         canReply: Bool = false,
+        isBannerAlive: (() -> Bool)? = nil,
         pressBanner: @escaping () -> Bool = { false },
         hideBanner: @escaping () -> Void = {},
         beginReply: @escaping () -> Bool = { false },
@@ -33,6 +35,7 @@ public struct RawBanner {
         self.texts = texts
         self.buttons = buttons
         self.canReply = canReply
+        self.isBannerAlive = isBannerAlive ?? { canReply }
         self.pressBanner = pressBanner
         self.hideBanner = hideBanner
         self.beginReply = beginReply
@@ -91,5 +94,18 @@ public struct IslandNotification: Equatable, Sendable {
         if kind == .incomingCall { return nil }
         let firstLine = body.split(separator: "\n", maxSplits: 1).first.map(String.init)
         return firstLine?.isEmpty == false ? firstLine : nil
+    }
+}
+
+/// In-memory notification record kept while "Keep notifications until dismissed" is enabled.
+public struct NotificationHistoryEntry: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let notification: IslandNotification
+    public let receivedAt: Date
+
+    public init(id: String = UUID().uuidString, notification: IslandNotification, receivedAt: Date = Date()) {
+        self.id = id
+        self.notification = notification
+        self.receivedAt = receivedAt
     }
 }

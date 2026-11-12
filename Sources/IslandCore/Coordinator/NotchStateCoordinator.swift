@@ -27,6 +27,13 @@ public enum NotchTuningAxis: String, Equatable, Sendable {
     case exitMargin
 }
 
+public enum NotchSwipeDirection: Equatable, Sendable {
+    case up
+    case down
+    case left
+    case right
+}
+
 /// Content-fitted wing sizing for the left and right sides of the physical notch.
 public struct NotchWingSizes: Equatable, Sendable {
     public let leftWidth: CGFloat
@@ -116,6 +123,11 @@ public final class NotchStateCoordinator: ObservableObject {
 
     /// Active visual calibration mode shown in the notch when adjusting Tuning sliders in Settings
     @Published public private(set) var activeTuningAxis: NotchTuningAxis?
+
+    /// Count of kept notifications available in the in-memory history drawer.
+    @Published public var keptNotificationCount: Int = 0
+    public var onExpandedSwipe: ((NotchSwipeDirection) -> Void)?
+    public var onOpenKeptNotifications: (() -> Void)?
 
     /// When true, an interactive text input (e.g. notification reply) is active in the expanded card.
     /// Locks the card in `.expandedCard` posture and disables hover collapse until submitted, cancelled, or clicked outside.
@@ -382,6 +394,11 @@ public final class NotchStateCoordinator: ObservableObject {
             isPressTensionActive = false
             posture = .expandedCard
         }
+    }
+
+    public func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
+        guard posture == .expandedCard, !isTextInputActive else { return }
+        onExpandedSwipe?(direction)
     }
 
     private func recalculatePosture() {

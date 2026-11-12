@@ -641,7 +641,8 @@ struct IslandTestsRunner {
                 "island.notifications.hideBanner.whatsapp",
                 "island.notifications.otherApps",
                 "island.notifications.messageDuration",
-                "island.notifications.maxWingWidth"
+                "island.notifications.maxWingWidth",
+                "island.notifications.keepUntilDismissed"
             ]
             for key in notificationDefaultsKeys {
                 UserDefaults.standard.removeObject(forKey: key)
@@ -815,6 +816,71 @@ struct IslandTestsRunner {
             check(plugin.isReplying == false, "submitReply resets isReplying to false")
             check(coordinator.isTextInputActive == false, "submitReply resets isTextInputActive to false")
             check(coordinator.persistentActivity == nil, "submitReply dismisses current active notification")
+
+            // Test keepUntilDismissed history & swipe navigation
+            check(plugin.keepUntilDismissed == false, "keepUntilDismissed defaults to false")
+            plugin.keepUntilDismissed = true
+            check(UserDefaults.standard.bool(forKey: "island.notifications.keepUntilDismissed") == true, "keepUntilDismissed persists to UserDefaults")
+
+            var firstBannerAlive = true
+            let olderBanner = RawBanner(
+                texts: ["Slack", "Lydia", "Nice, ik ga er morgen even doorheen."],
+                canReply: true,
+                isBannerAlive: { firstBannerAlive }
+            )
+            let newerBanner = RawBanner(
+                texts: ["WhatsApp", "Sam", "Are we still on for 7?"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [olderBanner])
+            plugin.handle(banners: [newerBanner])
+            check(plugin.history.count == 2, "keepUntilDismissed retains both incoming notifications in history")
+            check(coordinator.keptNotificationCount == 2, "Coordinator reflects keptNotificationCount == 2")
+            check(plugin.history.first?.notification.appName == "WhatsApp", "Newest notification is at index 0")
+
+            // Simulate toast expiry (banner gone from screen)
+            firstBannerAlive = false
+            let olderEntry = plugin.history[1]
+            check(plugin.canReply(to: olderEntry.notification, entryID: olderEntry.id) == false, "Expired banner cannot inline-reply")
+            let newerEntry = plugin.history[0]
+            check(plugin.canReply(to: newerEntry.notification, entryID: newerEntry.id) == true, "Live banner can still inline-reply")
+
+            // Swipe down while viewing expanded card opens history
+            coordinator.clearPersistentActivity(pluginID: plugin.id, forceCollapseHover: false)
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == true, "Swiping down in expanded card opens kept notification history")
+            check(plugin.selectedHistoryIndex == 0, "History opens at newest notification (index 0)")
+
+            // Swiping down/left cycles to older notification
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.selectedHistoryIndex == 1, "Swiping down moves to older notification (index 1)")
+
+            // Reply lock blocks swipe navigation
+            plugin.beginReply()
+            coordinator.handleExpandedSwipe(.up)
+            check(plugin.selectedHistoryIndex == 1, "Swiping is locked while typing a reply")
+            plugin.cancelReply()
+
+            // Swiping up returns to newer notification, then closes history back to default card
+            coordinator.handleExpandedSwipe(.up)
+            check(plugin.selectedHistoryIndex == 0, "Swiping up returns to newer notification (index 0)")
+            coordinator.handleExpandedSwipe(.up)
+            check(plugin.isBrowsingHistory == false, "Swiping up at index 0 closes history drawer")
+            check(plugin.history.count == 2, "Closing history drawer preserves kept notifications")
+
+            // Dismissing while browsing removes only the dismissed notification and advances
+            plugin.openHistory(at: 0)
+            plugin.dismissCurrent()
+            check(plugin.history.count == 1, "Dismissing removes only the dismissed notification")
+            check(plugin.history[0].notification.sender == "Lydia", "Remaining notification stays in history")
+            check(plugin.isBrowsingHistory == true, "Dismissing advances to remaining kept notification")
+
+            plugin.clearAllHistory()
+            check(plugin.history.isEmpty, "clearAllHistory empties kept notifications")
+            check(coordinator.keptNotificationCount == 0, "Coordinator badge count resets to 0")
+            plugin.keepUntilDismissed = false
 
             plugin.stop()
             print("  [PASS] testNotificationBridgePlugin")
