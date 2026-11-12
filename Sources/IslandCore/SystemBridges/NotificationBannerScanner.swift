@@ -307,12 +307,19 @@ public final class NotificationBannerScanner {
     }
 
     private static func pressBanner(_ element: AXUIElement, window: AXUIElement?) -> Bool {
+        let wasOffscreen = window.map { NotificationBannerDismisser.isOffscreen($0) } ?? false
         if let window {
             NotificationBannerDismisser.setWindowPosition(window, to: .zero)
         } else {
             NotificationBannerDismisser.restoreWindowsOnscreen()
         }
-        return press(element)
+        if press(element) {
+            return true
+        }
+        if wasOffscreen {
+            NotificationBannerDismisser.hideWindow(window)
+        }
+        return false
     }
 
     // MARK: - Banner Reply Support
@@ -342,18 +349,22 @@ public final class NotificationBannerScanner {
         return false
     }
 
+    private static let inputRoles: Set<String> = [
+        kAXTextAreaRole as String,
+        kAXTextFieldRole as String
+    ]
+
     private static func findInputElement(in element: AXUIElement) -> AXUIElement? {
-        findElement(withRole: kAXTextAreaRole as String, in: element)
-            ?? findElement(withRole: kAXTextFieldRole as String, in: element)
+        findElement(withRoles: inputRoles, in: element)
     }
 
-    private static func findElement(withRole targetRole: String, in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    private static func findElement(withRoles targetRoles: Set<String>, in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
         guard depth <= maxTreeDepth else { return nil }
-        if string(element, kAXRoleAttribute) == targetRole {
+        if let role = string(element, kAXRoleAttribute), targetRoles.contains(role) {
             return element
         }
         for child in children(of: element) {
-            if let found = findElement(withRole: targetRole, in: child, depth: depth + 1) {
+            if let found = findElement(withRoles: targetRoles, in: child, depth: depth + 1) {
                 return found
             }
         }
@@ -370,7 +381,7 @@ public final class NotificationBannerScanner {
                 string(element, kAXValueAttribute)
             ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
             let trimmed = BannerTextCleaner.trim(label).lowercased()
-            if keywords.contains(where: { trimmed == $0 || trimmed.contains($0) }) {
+            if keywords.contains(where: { trimmed.contains($0) }) {
                 return element
             }
         }
@@ -422,19 +433,24 @@ public final class NotificationBannerScanner {
         return true
     }
 
+    private static func triggerReplyAction(on bannerElement: AXUIElement) -> Bool {
+        if performAction(on: bannerElement, matching: replyKeywords) {
+            return true
+        }
+        if let replyButton = findButton(in: bannerElement, matching: replyKeywords) {
+            return press(replyButton)
+        }
+        return false
+    }
+
     private static func beginReply(on bannerElement: AXUIElement) -> Bool {
         if let existing = findInputElement(in: bannerElement) {
             AXUIElementSetAttributeValue(existing, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             return true
         }
 
-        if performAction(on: bannerElement, matching: replyKeywords) {
+        if triggerReplyAction(on: bannerElement) {
             return true
-        }
-        if let replyButton = findButton(in: bannerElement, matching: replyKeywords) {
-            if press(replyButton) {
-                return true
-            }
         }
         if performAction(on: bannerElement, matching: showDetailsKeywords) {
             return true
@@ -445,13 +461,19 @@ public final class NotificationBannerScanner {
     private static func sendReply(_ text: String, on bannerElement: AXUIElement) -> Bool {
         var inputArea = findInputElement(in: bannerElement)
         if inputArea == nil {
-            _ = beginReply(on: bannerElement)
+            var triedShowDetails = false
+            if !triggerReplyAction(on: bannerElement) {
+                triedShowDetails = performAction(on: bannerElement, matching: showDetailsKeywords)
+            }
             for attempt in 0..<10 {
                 Thread.sleep(forTimeInterval: 0.03)
                 inputArea = findInputElement(in: bannerElement)
                 if inputArea != nil { break }
                 if attempt == 4 {
-                    _ = performAction(on: bannerElement, matching: showDetailsKeywords)
+                    if !triedShowDetails {
+                        triedShowDetails = performAction(on: bannerElement, matching: showDetailsKeywords)
+                    }
+                    _ = triggerReplyAction(on: bannerElement)
                 }
             }
         }
@@ -473,13 +495,12 @@ public final class NotificationBannerScanner {
             for _ in 0..<5 where !isElementEnabled(submitButton) {
                 Thread.sleep(forTimeInterval: 0.03)
             }
-            if press(submitButton) {
+            if isElementEnabled(submitButton), press(submitButton) {
                 return true
             }
         }
 
-        if performAction(on: bannerElement, matching: sendKeywords)
-            || performAction(on: bannerElement, matching: replyKeywords) {
+        if performAction(on: bannerElement, matching: sendKeywords) {
             return true
         }
 

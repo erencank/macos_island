@@ -624,6 +624,13 @@ struct IslandTestsRunner {
             check(parsedExpandedSlack?.sender == "Lydia van Dam", "Expanded Slack sender parsed cleanly without chrome")
             check(parsedExpandedSlack?.body == "Nice, ik ga er morgen even doorheen.", "Expanded Slack body strips More Actions, Hide Details, and Reply chrome")
 
+            let localizedExpandedSlack = RawBanner(
+                texts: ["Slack", "Alex", "Hallo!", "Weitere Aktionen…", "Details ausblenden", "Antworten"],
+                canReply: true
+            )
+            let parsedLocalizedSlack = parsers.parse(localizedExpandedSlack)
+            check(parsedLocalizedSlack?.body == "Hallo!", "Expanded Slack body strips localized action chrome")
+
             print("  [PASS] testNotificationParsers")
         }
 
@@ -796,11 +803,14 @@ struct IslandTestsRunner {
             plugin.beginReply()
             plugin.replyDraft = "  LGTM!  "
 
-            // Mutated expanded banner arriving while replying must keep draft and update banner reference
+            // Mutated expanded banner arriving while replying must keep draft, hide banner if configured, and update banner reference
+            plugin.hideSlackBanner = true
+            var mutatedHideCalls = 0
             var mutatedReplySentText: String?
             let mutatedExpandedBanner = RawBanner(
                 texts: ["Slack", "Alex", "Can you review this?", "Hide Details", "Reply"],
                 canReply: true,
+                hideBanner: { mutatedHideCalls += 1 },
                 sendReply: { text in
                     mutatedReplySentText = text
                     return true
@@ -809,6 +819,8 @@ struct IslandTestsRunner {
             plugin.handle(banners: [mutatedExpandedBanner])
             check(plugin.isReplying == true, "Mutated banner for same notification must not reset isReplying")
             check(plugin.replyDraft == "  LGTM!  ", "Mutated banner for same notification must preserve replyDraft")
+            check(mutatedHideCalls == 1, "Mutated banner for hidden app is hidden while replying")
+            plugin.hideSlackBanner = false
 
             plugin.submitReply()
             check(mutatedReplySentText == "LGTM!", "submitReply trims and delivers reply text to latest banner.sendReply")

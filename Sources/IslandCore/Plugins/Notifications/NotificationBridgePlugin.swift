@@ -239,6 +239,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             presentedKeys.insert(banner.key)
             guard let notification = parsed else { continue }
             if isReplying, let active, signature(for: active.notification) == signature(for: notification) {
+                if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
                 self.active = ActiveNotification(payloadID: active.payloadID, notification: active.notification, banner: banner)
                 bannersByEntryID[active.payloadID] = banner
                 continue
