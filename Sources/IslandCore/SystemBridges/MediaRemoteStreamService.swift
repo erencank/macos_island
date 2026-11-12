@@ -27,7 +27,7 @@ public final class MediaRemoteStreamService: ObservableObject {
     private var isSimulatedTrackActive: Bool = false
     /// Prevents a poll during the first 1.2s after a user clicks Play/Pause from overwriting the optimistic toggle
     private var lastUserCommandTimestamp: Date = .distantPast
-    private var lastNavCommand: MediaPlaybackCommand?
+    public private(set) var lastNavCommand: MediaPlaybackCommand?
     private var lastNavCommandTimestamp: Date = .distantPast
 
     public init() {}

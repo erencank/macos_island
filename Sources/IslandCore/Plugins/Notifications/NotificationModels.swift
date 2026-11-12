@@ -130,7 +130,7 @@ public struct NotificationThreadMessage: Identifiable, Equatable, Sendable {
 
 /// In-memory notification record (or grouped thread) kept while "Keep notifications until dismissed" is enabled.
 public struct NotificationHistoryEntry: Identifiable, Equatable, Sendable {
-    private static let maxMessagesPerThread = 20
+    public static let maxMessagesPerThread = 20
 
     public let id: String
     public let notification: IslandNotification

@@ -331,7 +331,7 @@ public struct NotchCanvasView: View {
                 }
             }
             .padding(.bottom, 22)
-            .simultaneousGesture(
+            .gesture(
                 DragGesture(minimumDistance: 26)
                     .onEnded { value in
                         let dx = value.translation.width

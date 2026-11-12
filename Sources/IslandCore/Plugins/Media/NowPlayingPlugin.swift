@@ -630,6 +630,10 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             }
             .store(in: &cancellables)
 
+        coordinator.registerExpandedSwipeHandler(for: id) { [weak self] direction in
+            self?.handleExpandedSwipe(direction)
+        }
+
         mediaService.start()
     }
 
@@ -639,7 +643,23 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         isShowingTrackInfo = false
         mediaService.stop()
         cancellables.removeAll()
+        coordinator?.unregisterExpandedSwipeHandler(for: id)
         coordinator?.clearPersistentActivity(pluginID: id)
+    }
+
+    private func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
+        guard isEnabled,
+              let coordinator,
+              coordinator.swipeToSkipMediaEnabled,
+              coordinator.persistentActivity?.pluginID == id else { return }
+        switch direction {
+        case .left:
+            mediaService.sendCommand(.nextTrack)
+        case .right:
+            mediaService.sendCommand(.previousTrack)
+        case .up, .down:
+            break
+        }
     }
 
     private func handleTrackChange(_ change: TrackChangeEvent) {

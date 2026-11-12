@@ -878,22 +878,39 @@ struct IslandTestsRunner {
             check(plugin.isBrowsingHistory == true, "Swiping down in expanded card opens kept notification history")
             check(plugin.selectedHistoryIndex == 0, "History opens at newest notification (index 0)")
 
-            // Swiping down/left cycles to older notification
+            // Swiping left cycles to older notification; swiping down does not cycle further
             coordinator.handleExpandedSwipe(.down)
-            check(plugin.selectedHistoryIndex == 1, "Swiping down moves to older notification (index 1)")
+            check(plugin.selectedHistoryIndex == 0, "Swiping down while browsing history does not advance")
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Swiping left moves to older notification (index 1)")
 
             // Reply lock blocks swipe navigation
             plugin.beginReply()
-            coordinator.handleExpandedSwipe(.up)
+            coordinator.handleExpandedSwipe(.right)
             check(plugin.selectedHistoryIndex == 1, "Swiping is locked while typing a reply")
             plugin.cancelReply()
 
-            // Swiping up returns to newer notification, then closes history back to default card
+            // Swiping right returns to newer notification and stays at index 0
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.selectedHistoryIndex == 0, "Swiping right returns to newer notification (index 0)")
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.isBrowsingHistory == true && plugin.selectedHistoryIndex == 0, "Swiping right at index 0 stays in history")
+
+            // Swiping up from any index immediately closes history back to default card
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Moved back to index 1")
             coordinator.handleExpandedSwipe(.up)
-            check(plugin.selectedHistoryIndex == 0, "Swiping up returns to newer notification (index 0)")
-            coordinator.handleExpandedSwipe(.up)
-            check(plugin.isBrowsingHistory == false, "Swiping up at index 0 closes history drawer")
+            check(plugin.isBrowsingHistory == false, "Swiping up from index 1 immediately closes history drawer")
             check(plugin.history.count == 2, "Closing history drawer preserves kept notifications")
+
+            // Moving cursor away (hover exit) closes history drawer and collapses posture (never trapped open)
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == true && coordinator.posture == .expandedCard, "History opened in expanded posture")
+            coordinator.handleHoverExited()
+            check(plugin.isBrowsingHistory == false, "Hover exit closes history drawer")
+            check(coordinator.posture == .resting, "Hover exit collapses expanded card to resting")
+            check(plugin.history.count == 2, "Hover exit preserves kept notifications")
+            coordinator.handleNotchClicked()
 
             // Dismissing while browsing removes only the dismissed notification and advances
             plugin.openHistory(at: 0)
@@ -969,6 +986,32 @@ struct IslandTestsRunner {
             plugin.submitReply()
             check(slackMsg3Sent == "Omw!", "submitReply uses latest live banner in the grouped thread")
             check(waMsg1Sent == nil && waMsg2Sent == nil, "Other threads' banners were not invoked")
+
+            // Cancel reply after preserveReply still allows hover exit to collapse posture
+            let slackGroup4 = RawBanner(
+                texts: ["Slack, bol, dev, Bob: Still checking?", "bol", "dev", "Bob: Still checking?"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            let slackGroup5 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Yes, almost done", "bol", "dev", "Lydia: Yes, almost done"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [slackGroup4])
+            plugin.beginReply()
+            plugin.handle(banners: [slackGroup5])
+            plugin.cancelReply()
+            coordinator.handleHoverExited()
+            check(coordinator.posture == .compactWings, "After cancelReply, hover exit returns posture from expandedCard to compactWings")
+
+            // Disabling keepUntilDismissed clears history so collapsing active and re-enabling does not resurrect old items
+            plugin.keepUntilDismissed = false
+            check(plugin.history.isEmpty, "Disabling keepUntilDismissed clears kept history")
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.up)
+            plugin.keepUntilDismissed = true
+            check(plugin.history.isEmpty, "Re-enabling keepUntilDismissed after toast collapse does not resurrect cleared notifications")
 
             plugin.clearAllHistory()
             plugin.keepUntilDismissed = false
@@ -1059,6 +1102,26 @@ struct IslandTestsRunner {
             plugin.clearSimulatedTrack()
             plugin.simulateTrack()
             check(coordinator.persistentActivity?.wingSizes.leftWidth == 34, "Left wing should stay standard 34 width when track info reveal is disabled")
+
+            // Expanded swipe gestures control Next / Previous track when swipeToSkipMediaEnabled is true
+            let previousSwipeToSkip = UserDefaults.standard.object(forKey: "island.gestures.swipeToSkip")
+            coordinator.handleNotchClicked()
+            coordinator.swipeToSkipMediaEnabled = true
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.lastNavCommand == .nextTrack, "Swiping left on expanded Now Playing sends nextTrack")
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.mediaService.lastNavCommand == .previousTrack, "Swiping right on expanded Now Playing sends previousTrack")
+
+            coordinator.swipeToSkipMediaEnabled = false
+            plugin.simulateTrack()
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.currentTrack?.elapsedTime == 122, "Swipe left does not skip track when swipeToSkipMediaEnabled is false")
+            if let previousSwipeToSkip {
+                UserDefaults.standard.set(previousSwipeToSkip, forKey: "island.gestures.swipeToSkip")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "island.gestures.swipeToSkip")
+            }
+            coordinator.handleHoverExited()
 
             plugin.stop()
             check(coordinator.persistentActivity == nil, "Persistent activity should clear on stop")

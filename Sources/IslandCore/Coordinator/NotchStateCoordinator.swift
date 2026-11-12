@@ -126,8 +126,9 @@ public final class NotchStateCoordinator: ObservableObject {
 
     /// Count of kept notifications available in the in-memory history drawer.
     @Published public var keptNotificationCount: Int = 0
-    public var onExpandedSwipe: ((NotchSwipeDirection) -> Void)?
     public var onOpenKeptNotifications: (() -> Void)?
+    private var expandedSwipeHandlers: [String: (NotchSwipeDirection) -> Void] = [:]
+    private var hoverExitHandlers: [String: () -> Void] = [:]
 
     /// When true, an interactive text input (e.g. notification reply) is active in the expanded card.
     /// Locks the card in `.expandedCard` posture and disables hover collapse until submitted, cancelled, or clicked outside.
@@ -381,6 +382,9 @@ public final class NotchStateCoordinator: ObservableObject {
         hoverExpandTask?.cancel()
         isHovering = false
         if isTextInputActive { return }
+        for handler in hoverExitHandlers.values {
+            handler()
+        }
         withAnimation(IslandSprings.collapse) {
             isPressTensionActive = false
             recalculatePosture()
@@ -396,9 +400,27 @@ public final class NotchStateCoordinator: ObservableObject {
         }
     }
 
+    public func registerExpandedSwipeHandler(for pluginID: String, handler: @escaping (NotchSwipeDirection) -> Void) {
+        expandedSwipeHandlers[pluginID] = handler
+    }
+
+    public func unregisterExpandedSwipeHandler(for pluginID: String) {
+        expandedSwipeHandlers.removeValue(forKey: pluginID)
+    }
+
+    public func registerHoverExitHandler(for pluginID: String, handler: @escaping () -> Void) {
+        hoverExitHandlers[pluginID] = handler
+    }
+
+    public func unregisterHoverExitHandler(for pluginID: String) {
+        hoverExitHandlers.removeValue(forKey: pluginID)
+    }
+
     public func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
         guard posture == .expandedCard, !isTextInputActive else { return }
-        onExpandedSwipe?(direction)
+        for handler in expandedSwipeHandlers.values {
+            handler(direction)
+        }
     }
 
     private func recalculatePosture() {
