@@ -192,7 +192,7 @@ public final class NotificationBannerScanner {
                 texts: texts,
                 buttons: buttons,
                 canReply: canReply,
-                pressBanner: { press(element) },
+                pressBanner: { pressBanner(element, window: currentWindow) },
                 hideBanner: { NotificationBannerDismisser.hideWindow(currentWindow) },
                 beginReply: { beginReply(on: element) },
                 sendReply: { text in sendReply(text, on: element) }
@@ -215,6 +215,7 @@ public final class NotificationBannerScanner {
         guard depth <= maxTreeDepth else { return }
 
         let node = attributes(of: element)
+        if node.role == kAXTextAreaRole || node.role == kAXTextFieldRole { return }
         for candidate in [node.title, node.value, node.description] where !candidate.isEmpty && !texts.contains(candidate) {
             texts.append(candidate)
         }
@@ -296,7 +297,28 @@ public final class NotificationBannerScanner {
     }
 
     private static func press(_ element: AXUIElement) -> Bool {
-        AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        let error = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        if error != .success {
+            IslandLogger.system.error("AXPress failed (error: \(error.rawValue, privacy: .public))")
+            return false
+        }
+        return true
+    }
+
+    private static func pressBanner(_ element: AXUIElement, window: AXUIElement?) -> Bool {
+        let wasOffscreen = window.map { NotificationBannerDismisser.isOffscreen($0) } ?? false
+        if let window {
+            NotificationBannerDismisser.setWindowPosition(window, to: .zero)
+        } else {
+            NotificationBannerDismisser.restoreWindowsOnscreen()
+        }
+        if press(element) {
+            return true
+        }
+        if wasOffscreen {
+            NotificationBannerDismisser.hideWindow(window)
+        }
+        return false
     }
 
     // MARK: - Banner Reply Support
@@ -314,51 +336,41 @@ public final class NotificationBannerScanner {
 
     private static func detectCanReply(on bannerElement: AXUIElement, texts: [String]) -> Bool {
         let actions = actionNames(of: bannerElement)
-        if actions.contains(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return replyKeywords.contains(where: { lowered.contains($0) })
-        }) {
-            return true
-        }
-        if findReplyButton(in: bannerElement) != nil {
-            return true
-        }
-        if findTextArea(in: bannerElement) != nil {
-            return true
-        }
-        if actions.contains(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return sendKeywords.contains(where: { lowered.contains($0) })
-        }) {
-            return true
-        }
-        let isKnownMessenger = texts.first.map { firstText in
-            let lowered = firstText.lowercased()
-            return lowered.contains("whatsapp")
-        } ?? false
-        if isKnownMessenger && actions.contains(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return showDetailsKeywords.contains(where: { lowered.contains($0) })
-        }) {
+        if hasAction(in: actions, matching: replyKeywords) { return true }
+        if findButton(in: bannerElement, matching: replyKeywords) != nil { return true }
+        if findInputElement(in: bannerElement) != nil { return true }
+        if hasAction(in: actions, matching: sendKeywords) { return true }
+
+        let isKnownMessenger = texts.first.map { $0.lowercased().contains("whatsapp") } ?? false
+        if isKnownMessenger && hasAction(in: actions, matching: showDetailsKeywords) {
             return true
         }
         return false
     }
 
-    private static func findTextArea(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    private static let inputRoles: Set<String> = [
+        kAXTextAreaRole as String,
+        kAXTextFieldRole as String
+    ]
+
+    private static func findInputElement(in element: AXUIElement) -> AXUIElement? {
+        findElement(withRoles: inputRoles, in: element)
+    }
+
+    private static func findElement(withRoles targetRoles: Set<String>, in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
         guard depth <= maxTreeDepth else { return nil }
-        if string(element, kAXRoleAttribute) == (kAXTextAreaRole as String) {
+        if let role = string(element, kAXRoleAttribute), targetRoles.contains(role) {
             return element
         }
         for child in children(of: element) {
-            if let found = findTextArea(in: child, depth: depth + 1) {
+            if let found = findElement(withRoles: targetRoles, in: child, depth: depth + 1) {
                 return found
             }
         }
         return nil
     }
 
-    private static func findReplyButton(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    private static func findButton(in element: AXUIElement, matching keywords: Set<String>, depth: Int = 0) -> AXUIElement? {
         guard depth <= maxTreeDepth else { return nil }
         let role = string(element, kAXRoleAttribute)
         if role == (kAXButtonRole as String) || role == (kAXMenuButtonRole as String) {
@@ -368,38 +380,25 @@ public final class NotificationBannerScanner {
                 string(element, kAXValueAttribute)
             ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
             let trimmed = BannerTextCleaner.trim(label).lowercased()
-            if replyKeywords.contains(where: { trimmed.contains($0) }) {
+            if keywords.contains(where: { trimmed.contains($0) }) {
                 return element
             }
         }
         for child in children(of: element) {
-            if let found = findReplyButton(in: child, depth: depth + 1) {
+            if let found = findButton(in: child, matching: keywords, depth: depth + 1) {
                 return found
             }
         }
         return nil
     }
 
-    private static func findSendButton(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
-        guard depth <= maxTreeDepth else { return nil }
-        let role = string(element, kAXRoleAttribute)
-        if role == (kAXButtonRole as String) || role == (kAXMenuButtonRole as String) {
-            let label = [
-                string(element, kAXTitleAttribute),
-                string(element, kAXDescriptionAttribute),
-                string(element, kAXValueAttribute)
-            ].compactMap { $0 }.first { !$0.isEmpty } ?? ""
-            let trimmed = BannerTextCleaner.trim(label).lowercased()
-            if sendKeywords.contains(where: { trimmed == $0 || trimmed.contains($0) }) {
-                return element
-            }
+    private static func isElementEnabled(_ element: AXUIElement) -> Bool {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &ref) == .success,
+              let enabled = ref as? Bool else {
+            return true
         }
-        for child in children(of: element) {
-            if let found = findSendButton(in: child, depth: depth + 1) {
-                return found
-            }
-        }
-        return nil
+        return enabled
     }
 
     private static func actionNames(of element: AXUIElement) -> [String] {
@@ -411,80 +410,100 @@ public final class NotificationBannerScanner {
         return names
     }
 
+    private static func hasAction(in actions: [String], matching keywords: Set<String>) -> Bool {
+        matchingAction(in: actions, matching: keywords) != nil
+    }
+
+    private static func matchingAction(in actions: [String], matching keywords: Set<String>) -> String? {
+        actions.first { action in
+            let lowered = BannerTextCleaner.trim(action).lowercased()
+            return keywords.contains(where: { lowered.contains($0) })
+        }
+    }
+
+    private static func performAction(on element: AXUIElement, matching keywords: Set<String>) -> Bool {
+        let actions = actionNames(of: element)
+        guard let action = matchingAction(in: actions, matching: keywords) else { return false }
+        let error = AXUIElementPerformAction(element, action as CFString)
+        if error != .success {
+            IslandLogger.system.error("Banner action failed (error: \(error.rawValue, privacy: .public))")
+            return false
+        }
+        return true
+    }
+
+    private static func triggerReplyAction(on bannerElement: AXUIElement) -> Bool {
+        if performAction(on: bannerElement, matching: replyKeywords) {
+            return true
+        }
+        if let replyButton = findButton(in: bannerElement, matching: replyKeywords) {
+            return press(replyButton)
+        }
+        return false
+    }
+
     private static func beginReply(on bannerElement: AXUIElement) -> Bool {
-        if let existing = findTextArea(in: bannerElement) {
+        if let existing = findInputElement(in: bannerElement) {
             AXUIElementSetAttributeValue(existing, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             return true
         }
 
-        let actions = actionNames(of: bannerElement)
-        if let replyAction = actions.first(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return replyKeywords.contains(where: { lowered.contains($0) })
-        }) {
-            if AXUIElementPerformAction(bannerElement, replyAction as CFString) == .success {
-                return true
-            }
+        if triggerReplyAction(on: bannerElement) {
+            return true
         }
-
-        if let replyButton = findReplyButton(in: bannerElement) {
-            if press(replyButton) {
-                return true
-            }
+        if performAction(on: bannerElement, matching: showDetailsKeywords) {
+            return true
         }
-
-        if let detailsAction = actions.first(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return showDetailsKeywords.contains(where: { lowered.contains($0) })
-        }) {
-            if AXUIElementPerformAction(bannerElement, detailsAction as CFString) == .success {
-                return true
-            }
-        }
-
         return false
     }
 
     private static func sendReply(_ text: String, on bannerElement: AXUIElement) -> Bool {
-        var textArea = findTextArea(in: bannerElement)
-        if textArea == nil {
-            _ = beginReply(on: bannerElement)
-            for _ in 0..<10 {
+        var inputArea = findInputElement(in: bannerElement)
+        if inputArea == nil {
+            var triedShowDetails = false
+            if !triggerReplyAction(on: bannerElement) {
+                triedShowDetails = performAction(on: bannerElement, matching: showDetailsKeywords)
+            }
+            for attempt in 0..<10 {
                 Thread.sleep(forTimeInterval: 0.03)
-                textArea = findTextArea(in: bannerElement)
-                if textArea != nil { break }
+                inputArea = findInputElement(in: bannerElement)
+                if inputArea != nil { break }
+                if attempt == 4 {
+                    if !triedShowDetails {
+                        triedShowDetails = performAction(on: bannerElement, matching: showDetailsKeywords)
+                    }
+                    _ = triggerReplyAction(on: bannerElement)
+                }
             }
         }
 
-        guard let targetArea = textArea else {
-            IslandLogger.system.error("sendReply failed: could not locate AXTextArea in banner")
+        guard let targetArea = inputArea else {
+            IslandLogger.system.error("sendReply failed: could not locate input area in banner")
             return false
         }
 
         AXUIElementSetAttributeValue(targetArea, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         let setResult = AXUIElementSetAttributeValue(targetArea, kAXValueAttribute as CFString, text as CFTypeRef)
         guard setResult == .success else {
-            IslandLogger.system.error("sendReply failed: could not set kAXValueAttribute (error: \(setResult.rawValue))")
+            IslandLogger.system.error("sendReply failed: could not set kAXValueAttribute (error: \(setResult.rawValue, privacy: .public))")
             return false
         }
 
-        if let sendButton = findSendButton(in: bannerElement) {
-            if press(sendButton) {
+        if let submitButton = findButton(in: bannerElement, matching: sendKeywords)
+            ?? findButton(in: bannerElement, matching: replyKeywords) {
+            for _ in 0..<5 where !isElementEnabled(submitButton) {
+                Thread.sleep(forTimeInterval: 0.03)
+            }
+            if isElementEnabled(submitButton), press(submitButton) {
                 return true
             }
         }
 
-        let actions = actionNames(of: bannerElement)
-        if let sendAction = actions.first(where: { action in
-            let lowered = BannerTextCleaner.trim(action).lowercased()
-            return sendKeywords.contains(where: { lowered.contains($0) })
-        }) {
-            if AXUIElementPerformAction(bannerElement, sendAction as CFString) == .success {
-                return true
-            }
+        if performAction(on: bannerElement, matching: sendKeywords) {
+            return true
         }
 
-        IslandLogger.system.error("sendReply: text was set but send action/button could not be performed")
+        IslandLogger.system.error("sendReply failed: text was set but submit action/button could not be performed")
         return false
     }
 }

@@ -602,6 +602,35 @@ struct IslandTestsRunner {
             let parsedOutlook = parsers.parse(outlookWithDetails)
             check(parsedOutlook?.canReply == false, "Outlook email notification is never replyable")
 
+            let expandedSlackReply = RawBanner(
+                texts: [
+                    "Slack, bol, Lydia van Dam, Nice, ik ga er morgen even doorheen.",
+                    "bol",
+                    "Lydia van Dam",
+                    "Nice, ik ga er morgen even doorheen.",
+                    "More Actions…",
+                    "Hide Details",
+                    "Reply"
+                ],
+                buttons: [
+                    BannerButton(title: "More Actions…", press: { true }),
+                    BannerButton(title: "Hide Details", press: { true }),
+                    BannerButton(title: "Reply", press: { true })
+                ],
+                canReply: true
+            )
+            let parsedExpandedSlack = parsers.parse(expandedSlackReply)
+            check(parsedExpandedSlack?.canReply == true, "Expanded Slack notification preserves canReply")
+            check(parsedExpandedSlack?.sender == "Lydia van Dam", "Expanded Slack sender parsed cleanly without chrome")
+            check(parsedExpandedSlack?.body == "Nice, ik ga er morgen even doorheen.", "Expanded Slack body strips More Actions, Hide Details, and Reply chrome")
+
+            let localizedExpandedSlack = RawBanner(
+                texts: ["Slack", "Alex", "Hallo!", "Weitere Aktionen…", "Details ausblenden", "Antworten"],
+                canReply: true
+            )
+            let parsedLocalizedSlack = parsers.parse(localizedExpandedSlack)
+            check(parsedLocalizedSlack?.body == "Hallo!", "Expanded Slack body strips localized action chrome")
+
             print("  [PASS] testNotificationParsers")
         }
 
@@ -772,8 +801,29 @@ struct IslandTestsRunner {
             // Begin reply again and submit
             plugin.beginReply()
             plugin.replyDraft = "  LGTM!  "
+
+            // Mutated expanded banner arriving while replying must keep draft, hide banner if configured, and update banner reference
+            plugin.hideSlackBanner = true
+            var mutatedHideCalls = 0
+            var mutatedReplySentText: String?
+            let mutatedExpandedBanner = RawBanner(
+                texts: ["Slack", "Alex", "Can you review this?", "Hide Details", "Reply"],
+                canReply: true,
+                hideBanner: { mutatedHideCalls += 1 },
+                sendReply: { text in
+                    mutatedReplySentText = text
+                    return true
+                }
+            )
+            plugin.handle(banners: [mutatedExpandedBanner])
+            check(plugin.isReplying == true, "Mutated banner for same notification must not reset isReplying")
+            check(plugin.replyDraft == "  LGTM!  ", "Mutated banner for same notification must preserve replyDraft")
+            check(mutatedHideCalls == 1, "Mutated banner for hidden app is hidden while replying")
+            plugin.hideSlackBanner = false
+
             plugin.submitReply()
-            check(replySentText == "LGTM!", "submitReply trims and delivers reply text to banner.sendReply")
+            check(mutatedReplySentText == "LGTM!", "submitReply trims and delivers reply text to latest banner.sendReply")
+            check(replySentText == nil, "submitReply uses updated banner reference after in-place expansion")
             check(plugin.isReplying == false, "submitReply resets isReplying to false")
             check(coordinator.isTextInputActive == false, "submitReply resets isTextInputActive to false")
             check(coordinator.persistentActivity == nil, "submitReply dismisses current active notification")

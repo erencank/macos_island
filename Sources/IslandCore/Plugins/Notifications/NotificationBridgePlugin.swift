@@ -194,7 +194,13 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
 
             guard !presentedKeys.contains(banner.key) else { continue }
             presentedKeys.insert(banner.key)
-            guard let notification = parsed, !isRecentDuplicate(notification) else { continue }
+            guard let notification = parsed else { continue }
+            if isReplying, let active, signature(for: active.notification) == signature(for: notification) {
+                if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
+                self.active = ActiveNotification(payloadID: active.payloadID, notification: active.notification, banner: banner)
+                continue
+            }
+            guard !isRecentDuplicate(notification) else { continue }
             if shouldHideBanner(for: notification.appName) { banner.hideBanner() }
             present(notification, banner: banner, payloadID: banner.key)
         }
@@ -207,16 +213,20 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         }
     }
 
+    private func signature(for notification: IslandNotification) -> String {
+        [notification.appName, notification.sender, notification.channel ?? "", notification.title ?? "", notification.body]
+            .joined(separator: "\u{1F}")
+    }
+
     /// A tray card re-exposed by hovering carries the same content as the banner shown earlier, so it
     /// must neither be presented again nor dismissed (dismissing it would remove it from the tray).
     private func isRecentDuplicate(_ notification: IslandNotification) -> Bool {
         guard notification.kind != .incomingCall else { return false }
         let now = Date()
         recentSignatures = recentSignatures.filter { now.timeIntervalSince($0.value) < Self.duplicateWindow }
-        let signature = [notification.appName, notification.sender, notification.channel ?? "", notification.title ?? "", notification.body]
-            .joined(separator: "\u{1F}")
-        defer { recentSignatures[signature] = now }
-        return recentSignatures[signature] != nil
+        let key = signature(for: notification)
+        defer { recentSignatures[key] = now }
+        return recentSignatures[key] != nil
     }
 
     private func notification(for banner: RawBanner) -> IslandNotification? {
@@ -383,7 +393,10 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
     public func openCurrent() {
         guard let active else { return }
         let opened = active.banner?.pressBanner() ?? false
-        if !opened { activateApp(named: active.notification.appName) }
+        if !opened {
+            IslandLogger.system.info("pressBanner failed or unavailable; falling back to app activation")
+            activateApp(named: active.notification.appName)
+        }
         dismissCurrent()
     }
 

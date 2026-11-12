@@ -36,7 +36,11 @@ enum BannerTextCleaner {
     private static let actionChromeTexts: Set<String> = [
         "hide details", "show details", "more actions…", "more actions...",
         "send", "reply", "close", "options",
-        "details verbergen", "details weergeven", "meer acties…", "verstuur", "beantwoorden", "sluit"
+        "details verbergen", "details weergeven", "meer acties…", "meer acties...", "verstuur", "beantwoorden", "sluit",
+        "details ausblenden", "details einblenden", "weitere aktionen…", "weitere aktionen...", "senden", "antworten", "schließen",
+        "masquer les détails", "afficher les détails", "plus d’actions…", "plus d'actions…", "plus d'actions...", "envoyer", "répondre", "fermer",
+        "ocultar detalles", "ver detalles", "más acciones…", "más acciones...", "enviar", "responder", "cerrar",
+        "nascondi dettagli", "mostra dettagli", "altre azioni…", "altre azioni...", "invia", "rispondi", "chiudi"
     ]
 
     static func isActionChrome(_ text: String) -> Bool {

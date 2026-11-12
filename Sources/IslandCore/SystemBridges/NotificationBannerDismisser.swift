@@ -48,7 +48,7 @@ enum NotificationBannerDismisser {
     /// Parks all Notification Center windows offscreen so new banners spawn offscreen from frame 0.
     static func parkWindowsOffscreen() {
         for window in notificationCenterWindows() {
-            if let pos = position(of: window), pos.x >= strandedThresholdX {
+            if isOffscreen(window) {
                 continue
             }
             setWindowPosition(window, to: offscreenOrigin)
@@ -63,10 +63,14 @@ enum NotificationBannerDismisser {
     /// Repairs windows left offscreen at `x >= 8000`.
     static func recoverStrandedWindows(defaultOrigin: CGPoint = .zero) {
         for window in notificationCenterWindows() {
-            guard let position = position(of: window),
-                  position.x >= strandedThresholdX else { continue }
+            guard isOffscreen(window) else { continue }
             setWindowPosition(window, to: defaultOrigin)
         }
+    }
+
+    static func isOffscreen(_ window: AXUIElement) -> Bool {
+        guard let pos = position(of: window) else { return false }
+        return pos.x >= strandedThresholdX
     }
 
     private static func notificationCenterWindows() -> [AXUIElement] {
