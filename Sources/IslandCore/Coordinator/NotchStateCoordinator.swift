@@ -34,6 +34,47 @@ public enum NotchSwipeDirection: Equatable, Sendable {
     case right
 }
 
+public struct NotchNotificationHistoryState: Equatable, Sendable {
+    public var totalCount: Int
+    public var selectedIndex: Int
+    public var isBrowsing: Bool
+    public var isReplying: Bool
+
+    public init(
+        totalCount: Int = 0,
+        selectedIndex: Int = 0,
+        isBrowsing: Bool = false,
+        isReplying: Bool = false
+    ) {
+        self.totalCount = totalCount
+        self.selectedIndex = selectedIndex
+        self.isBrowsing = isBrowsing
+        self.isReplying = isReplying
+    }
+}
+
+public struct NotchNotificationHistoryActions {
+    public let open: () -> Void
+    public let close: () -> Void
+    public let previous: () -> Void
+    public let next: () -> Void
+    public let clearAll: () -> Void
+
+    public init(
+        open: @escaping () -> Void,
+        close: @escaping () -> Void,
+        previous: @escaping () -> Void,
+        next: @escaping () -> Void,
+        clearAll: @escaping () -> Void
+    ) {
+        self.open = open
+        self.close = close
+        self.previous = previous
+        self.next = next
+        self.clearAll = clearAll
+    }
+}
+
 /// Content-fitted wing sizing for the left and right sides of the physical notch.
 public struct NotchWingSizes: Equatable, Sendable {
     public let leftWidth: CGFloat
@@ -126,7 +167,8 @@ public final class NotchStateCoordinator: ObservableObject {
 
     /// Count of kept notifications available in the in-memory history drawer.
     @Published public var keptNotificationCount: Int = 0
-    public var onOpenKeptNotifications: (() -> Void)?
+    @Published public var notificationHistoryState = NotchNotificationHistoryState()
+    public var notificationHistoryActions: NotchNotificationHistoryActions?
     private var expandedSwipeHandlers: [String: (NotchSwipeDirection) -> Bool] = [:]
     private var hoverExitHandlers: [String: () -> Void] = [:]
 

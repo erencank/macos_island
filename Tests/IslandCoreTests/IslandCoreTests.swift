@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import IOBluetooth
@@ -862,6 +863,7 @@ struct IslandTestsRunner {
             plugin.handle(banners: [newerBanner])
             check(plugin.history.count == 2, "keepUntilDismissed retains both incoming notifications in history")
             check(coordinator.keptNotificationCount == 2, "Coordinator reflects keptNotificationCount == 2")
+            check(coordinator.notificationHistoryState == NotchNotificationHistoryState(totalCount: 2, selectedIndex: 0, isBrowsing: false, isReplying: false), "Coordinator notificationHistoryState reflects non-browsing kept count")
             check(plugin.history.first?.notification.appName == "WhatsApp", "Newest notification is at index 0")
 
             // Simulate toast expiry (banner gone from screen)
@@ -883,12 +885,27 @@ struct IslandTestsRunner {
             check(plugin.selectedHistoryIndex == 0, "Swiping down while browsing history does not advance")
             coordinator.handleExpandedSwipe(.left)
             check(plugin.selectedHistoryIndex == 1, "Swiping left moves to older notification (index 1)")
+            check(coordinator.notificationHistoryState == NotchNotificationHistoryState(totalCount: 2, selectedIndex: 1, isBrowsing: true, isReplying: false), "Coordinator notificationHistoryState updates selectedIndex and isBrowsing")
 
-            // Reply lock blocks swipe navigation
+            // Reply lock blocks swipe navigation and updates notificationHistoryState.isReplying
             plugin.beginReply()
+            check(coordinator.notificationHistoryState.isReplying == true, "Coordinator notificationHistoryState reflects active reply")
             coordinator.handleExpandedSwipe(.right)
             check(plugin.selectedHistoryIndex == 1, "Swiping is locked while typing a reply")
             plugin.cancelReply()
+            check(coordinator.notificationHistoryState.isReplying == false, "Coordinator notificationHistoryState clears isReplying after cancelReply")
+
+            // Coordinator top-ear history actions mirror open/next/previous/close/clearAll
+            coordinator.notificationHistoryActions?.previous()
+            check(plugin.selectedHistoryIndex == 0, "notificationHistoryActions.previous moves to newer notification")
+            coordinator.notificationHistoryActions?.next()
+            check(plugin.selectedHistoryIndex == 1, "notificationHistoryActions.next moves to older notification")
+            coordinator.notificationHistoryActions?.close()
+            check(plugin.isBrowsingHistory == false && coordinator.notificationHistoryState.isBrowsing == false, "notificationHistoryActions.close closes history drawer")
+            coordinator.notificationHistoryActions?.open()
+            check(plugin.isBrowsingHistory == true && plugin.selectedHistoryIndex == 0, "notificationHistoryActions.open reopens history at index 0")
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Moved to index 1 via swipe")
 
             // Swiping right returns to newer notification and stays at index 0
             coordinator.handleExpandedSwipe(.right)
@@ -1208,6 +1225,168 @@ struct IslandTestsRunner {
             plugin.stop()
             check(coordinator.persistentActivity == nil, "Persistent activity should clear on stop")
             print("  [PASS] testNowPlayingTrackChangeAnimationAndSettings")
+        }
+
+        // Top-ear Notification History controls: hit-testing in flipped NSHostingView & click dispatch
+        do {
+            _ = NSApplication.shared
+            let monitor = ScreenGeometryMonitor()
+            let geo = monitor.activeGeometry
+
+            var openCount = 0
+            var prevCount = 0
+            var nextCount = 0
+            var clearCount = 0
+            var closeCount = 0
+
+            func configureActions(on coordinator: NotchStateCoordinator) {
+                coordinator.notificationHistoryActions = NotchNotificationHistoryActions(
+                    open: { openCount += 1 },
+                    close: { closeCount += 1 },
+                    previous: { prevCount += 1 },
+                    next: { nextCount += 1 },
+                    clearAll: { clearCount += 1 }
+                )
+            }
+
+            func presentPanel(
+                for coordinator: NotchStateCoordinator,
+                withProvider: Bool = true
+            ) -> (panel: NotchPanel, hosting: NotchHitTestHostingView<NotchCanvasView>) {
+                let canvas = NotchCanvasView(
+                    coordinator: coordinator,
+                    geometryMonitor: monitor,
+                    defaultExpandedContent: { AnyView(Text("Default")) }
+                )
+                let hosting = NotchHitTestHostingView(rootView: canvas)
+                hosting.frame = NSRect(x: 0, y: 0, width: NotchGeometry.canvasWidth, height: NotchGeometry.canvasHeight)
+
+                if withProvider {
+                    let layout = coordinator.targetLayout(for: geo.notchFrame.size, hasPhysicalNotch: geo.hasPhysicalNotch)
+                    let earPadding: CGFloat = coordinator.posture == .expandedCard ? 16 : 11
+                    let width = layout.totalWidth + (earPadding * 2)
+                    let height = layout.height
+                    let originX = ((NotchGeometry.canvasWidth - width) / 2.0) + layout.horizontalCenterOffset
+                    let hitRect = CGRect(x: originX, y: 0, width: width, height: height)
+                    hosting.activeHitRectProvider = { hitRect }
+                }
+
+                let panel = NotchPanel(contentRect: geo.canvasWindowFrame)
+                panel.contentView = hosting
+                panel.allowsKeyFocus = false
+                panel.ignoresMouseEvents = false
+                panel.orderFrontRegardless()
+                hosting.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                return (panel, hosting)
+            }
+
+            @discardableResult
+            func clickFlipped(_ flippedPt: NSPoint, in hosting: NotchHitTestHostingView<NotchCanvasView>, panel: NotchPanel) -> NSView? {
+                let superviewPt = hosting.convert(flippedPt, to: panel.contentView?.superview)
+                let hit = hosting.hitTest(superviewPt)
+                guard let down = NSEvent.mouseEvent(
+                    with: .leftMouseDown,
+                    location: superviewPt,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: 1,
+                    pressure: 1
+                ), let up = NSEvent.mouseEvent(
+                    with: .leftMouseUp,
+                    location: superviewPt,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime + 0.02,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: 2,
+                    clickCount: 1,
+                    pressure: 0
+                ) else {
+                    return hit
+                }
+                panel.sendEvent(down)
+                panel.sendEvent(up)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                return hit
+            }
+
+            // 1. Bell badge opens history from .expandedCard top-right ear
+            let badgeCoordinator = NotchStateCoordinator(hoverExpandDelayMs: 0)
+            configureActions(on: badgeCoordinator)
+            badgeCoordinator.notificationHistoryState = NotchNotificationHistoryState(
+                totalCount: 2,
+                selectedIndex: 0,
+                isBrowsing: false,
+                isReplying: false
+            )
+            badgeCoordinator.handleNotchClicked()
+
+            let (badgePanel, badgeHosting) = presentPanel(for: badgeCoordinator)
+            let badgeProxies = badgeHosting.subviews
+                .filter { String(describing: type(of: $0)).contains("KeyViewProxy") }
+                .map(\.frame)
+                .sorted { $0.minX < $1.minX }
+            check(badgeProxies.count == 1, "Expected 1 top-ear button proxy for keptNotificationsBadge, got \(badgeProxies.count)")
+            if let bellRect = badgeProxies.first {
+                check(bellRect.midY < 45, "Bell badge sits inside top ear band (flipped y=\(bellRect.midY))")
+                let hit = clickFlipped(NSPoint(x: bellRect.midX, y: bellRect.midY), in: badgeHosting, panel: badgePanel)
+                check(hit != nil, "hitTest must succeed on top-ear bell badge")
+            }
+            check(openCount == 1, "Clicking top-ear bell badge triggers open action")
+
+            // Fallback interactive rect (activeHitRectProvider == nil) must also cover top ear (y: 0..<38)
+            badgeHosting.activeHitRectProvider = nil
+            let fallbackTopSuperviewPt = badgeHosting.convert(NSPoint(x: NotchGeometry.canvasWidth / 2, y: 20), to: badgePanel.contentView?.superview)
+            let fallbackBottomSuperviewPt = badgeHosting.convert(NSPoint(x: NotchGeometry.canvasWidth / 2, y: NotchGeometry.canvasHeight - 20), to: badgePanel.contentView?.superview)
+            check(badgeHosting.hitTest(fallbackTopSuperviewPt) != nil, "Fallback hit rect covers top-ear y=20 in flipped hosting coordinates")
+            check(badgeHosting.hitTest(fallbackBottomSuperviewPt) == nil, "Fallback hit rect rejects bottom-edge y=canvasHeight-20")
+            badgePanel.orderOut(nil)
+
+            // 2. Pager (<, >), Clear, and Close buttons fire in top ears while browsing history
+            let historyCoordinator = NotchStateCoordinator(hoverExpandDelayMs: 0)
+            configureActions(on: historyCoordinator)
+            historyCoordinator.publishPersistentActivity(
+                NotchActivityPayload(
+                    id: "test-notif-hittest",
+                    pluginID: "com.island.plugin.notifications",
+                    priority: .high,
+                    posture: .compactWings,
+                    wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: 80),
+                    compactLeadingView: AnyView(Text("L")),
+                    compactTrailingView: AnyView(Text("R")),
+                    expandedView: AnyView(Text("Notification Body"))
+                )
+            )
+            historyCoordinator.notificationHistoryState = NotchNotificationHistoryState(
+                totalCount: 3,
+                selectedIndex: 1,
+                isBrowsing: true,
+                isReplying: false
+            )
+            historyCoordinator.handleNotchClicked()
+
+            let (historyPanel, historyHosting) = presentPanel(for: historyCoordinator)
+            let historyProxies = historyHosting.subviews
+                .filter { String(describing: type(of: $0)).contains("KeyViewProxy") }
+                .map(\.frame)
+                .sorted { $0.minX < $1.minX }
+            check(historyProxies.count == 4, "Expected 4 top-ear button proxies (<, >, Clear, Close), got \(historyProxies.count)")
+            for (idx, rect) in historyProxies.enumerated() {
+                check(rect.midY < 45, "History top-ear button \(idx) sits inside top ear band (flipped y=\(rect.midY))")
+                let hit = clickFlipped(NSPoint(x: rect.midX, y: rect.midY), in: historyHosting, panel: historyPanel)
+                check(hit != nil, "hitTest must succeed on history top-ear button \(idx)")
+            }
+            historyPanel.orderOut(nil)
+
+            check(prevCount == 1, "Clicking '<' arrow triggers previous action")
+            check(nextCount == 1, "Clicking '>' arrow triggers next action")
+            check(clearCount == 1, "Clicking 'Clear' triggers clearAll action")
+            check(closeCount == 1, "Clicking close button triggers close action")
+            print("  [PASS] testTopEarHistoryButtonHitTestingAndClicks")
         }
 
         print("==> Test Results: \(passed) checks passed, \(failed) failed.")

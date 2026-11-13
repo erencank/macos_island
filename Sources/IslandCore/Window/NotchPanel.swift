@@ -23,7 +23,7 @@ public final class NotchHitTestHostingView<Content: View>: NSHostingView<Content
 
     private func currentInteractiveRect() -> CGRect {
         guard let provider = activeHitRectProvider else {
-            return CGRect(x: bounds.midX - 100, y: bounds.maxY - 38, width: 200, height: 38)
+            return CGRect(x: bounds.midX - 100, y: 0, width: 200, height: 38)
         }
         return provider()
     }

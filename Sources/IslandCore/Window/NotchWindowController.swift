@@ -69,12 +69,12 @@ public final class NotchWindowController {
                 for: geo.notchFrame.size,
                 hasPhysicalNotch: geo.hasPhysicalNotch
             )
-            let earPadding: CGFloat = 11
+            let earPadding: CGFloat = self.coordinator.posture == .expandedCard ? 16 : 11
             let width = layout.totalWidth + (earPadding * 2)
             let height = layout.height
             let originX = ((NotchGeometry.canvasWidth - width) / 2.0) + layout.horizontalCenterOffset
-            let originY = NotchGeometry.canvasHeight - height
-            return CGRect(x: originX, y: originY, width: width, height: height)
+            // NotchHitTestHostingView is an NSHostingView (isFlipped == true), so y = 0 is the top edge.
+            return CGRect(x: originX, y: 0, width: width, height: height)
         }
 
         hostingView.onFileDragEntered = { [weak self] in
@@ -325,7 +325,7 @@ public final class NotchWindowController {
             hasPhysicalNotch: geo.hasPhysicalNotch
         )
 
-        let earPadding: CGFloat = 11
+        let earPadding: CGFloat = coordinator.posture == .expandedCard ? 16 : 11
         let activeWidth = layout.totalWidth + (earPadding * 2)
         let activeHeight = layout.height
 

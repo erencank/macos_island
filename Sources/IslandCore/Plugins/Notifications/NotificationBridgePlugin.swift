@@ -75,7 +75,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         }
     }
     @Published public private(set) var isCalibratingWidth: Bool = false
-    @Published public var isReplying: Bool = false
+    @Published public var isReplying: Bool = false {
+        didSet { syncCoordinatorHistoryState() }
+    }
     @Published public var replyDraft: String = ""
     @Published public var isSendingReply: Bool = false
     @Published public var keepUntilDismissed: Bool {
@@ -86,12 +88,18 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             } else if let active, active.notification.kind != .incomingCall, !isCalibratingWidth {
                 _ = recordInHistory(active.notification, messages: active.messages, banner: active.banner, entryID: active.payloadID)
             }
-            syncCoordinatorBadgeCount()
+            syncCoordinatorHistoryState()
         }
     }
-    @Published public private(set) var history: [NotificationHistoryEntry] = []
-    @Published public private(set) var selectedHistoryIndex: Int = 0
-    @Published public private(set) var isBrowsingHistory: Bool = false
+    @Published public private(set) var history: [NotificationHistoryEntry] = [] {
+        didSet { syncCoordinatorHistoryState() }
+    }
+    @Published public private(set) var selectedHistoryIndex: Int = 0 {
+        didSet { syncCoordinatorHistoryState() }
+    }
+    @Published public private(set) var isBrowsingHistory: Bool = false {
+        didSet { syncCoordinatorHistoryState() }
+    }
 
     private static let slackKey = "island.notifications.slack"
     private static let teamsKey = "island.notifications.teams"
@@ -180,9 +188,13 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
                 guard let self, self.isBrowsingHistory, newPosture != .expandedCard else { return }
                 self.closeHistory()
             }
-        coordinator.onOpenKeptNotifications = { [weak self] in
-            self?.openHistory(at: 0)
-        }
+        coordinator.notificationHistoryActions = NotchNotificationHistoryActions(
+            open: { [weak self] in self?.openHistory(at: 0) },
+            close: { [weak self] in self?.closeHistory() },
+            previous: { [weak self] in self?.showPreviousNotification() },
+            next: { [weak self] in self?.showNextNotification() },
+            clearAll: { [weak self] in self?.clearAllHistory() }
+        )
         coordinator.registerExpandedSwipeHandler(for: id) { [weak self] direction in
             self?.handleExpandedSwipe(direction) ?? false
         }
@@ -190,7 +202,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             guard let self, self.isBrowsingHistory, !self.isReplying else { return }
             self.closeHistory()
         }
-        syncCoordinatorBadgeCount()
+        syncCoordinatorHistoryState()
         scanner.start()
     }
 
@@ -199,10 +211,9 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         dismissTask?.cancel()
         hoverCancellable?.cancel()
         postureCancellable?.cancel()
-        coordinator?.onOpenKeptNotifications = nil
+        coordinator?.notificationHistoryActions = nil
         coordinator?.unregisterExpandedSwipeHandler(for: id)
         coordinator?.unregisterHoverExitHandler(for: id)
-        coordinator?.keptNotificationCount = 0
         presentedKeys = []
         recentSignatures = [:]
         bannersByEntryID = [:]
@@ -210,6 +221,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         selectedHistoryIndex = 0
         isBrowsingHistory = false
         resetReplyState()
+        syncCoordinatorHistoryState()
         active = nil
         coordinator?.clearPersistentActivity(pluginID: id)
     }
@@ -516,7 +528,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
             history = Array(history.prefix(Self.maxHistoryCount))
         }
         selectedHistoryIndex = 0
-        syncCoordinatorBadgeCount()
+        syncCoordinatorHistoryState()
         return entry
     }
 
@@ -527,11 +539,18 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         if isBrowsingHistory {
             closeHistory()
         }
-        syncCoordinatorBadgeCount()
+        syncCoordinatorHistoryState()
     }
 
-    private func syncCoordinatorBadgeCount() {
-        coordinator?.keptNotificationCount = keepUntilDismissed ? history.count : 0
+    private func syncCoordinatorHistoryState() {
+        let count = keepUntilDismissed ? history.count : 0
+        coordinator?.keptNotificationCount = count
+        coordinator?.notificationHistoryState = NotchNotificationHistoryState(
+            totalCount: count,
+            selectedIndex: isBrowsingHistory ? selectedHistoryIndex : 0,
+            isBrowsing: isBrowsingHistory,
+            isReplying: isReplying
+        )
     }
 
     public func openHistory(at index: Int = 0) {
@@ -601,7 +620,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         history.removeAll()
         bannersByEntryID.removeAll()
         selectedHistoryIndex = 0
-        syncCoordinatorBadgeCount()
+        syncCoordinatorHistoryState()
         if isBrowsingHistory || active != nil {
             isBrowsingHistory = false
             resetReplyState()
@@ -770,7 +789,7 @@ public final class NotificationBridgePlugin: ObservableObject, NotchPlugin {
         if let removedID = displayedEntryID {
             history.removeAll { $0.id == removedID }
             bannersByEntryID.removeValue(forKey: removedID)
-            syncCoordinatorBadgeCount()
+            syncCoordinatorHistoryState()
         }
 
         if isBrowsingHistory {
