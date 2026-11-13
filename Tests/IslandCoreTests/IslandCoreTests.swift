@@ -1013,10 +1013,59 @@ struct IslandTestsRunner {
             plugin.keepUntilDismissed = true
             check(plugin.history.isEmpty, "Re-enabling keepUntilDismissed after toast collapse does not resurrect cleared notifications")
 
-            plugin.clearAllHistory()
-            plugin.keepUntilDismissed = false
+            // Swiping down while an incoming call is active must not overwrite the call with history
+            let keptMsg = RawBanner(
+                texts: ["Slack", "Lydia", "Kept message"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [keptMsg])
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.up)
+            let incomingCallBanner = RawBanner(
+                texts: ["WhatsApp", "Sam", "Incoming voice call"],
+                buttons: [BannerButton(title: "Accept", press: { true }), BannerButton(title: "Decline", press: { true })]
+            )
+            plugin.handle(banners: [incomingCallBanner])
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == false, "Swiping down during an incoming call does not open history")
+            check(coordinator.persistentActivity?.priority == .critical, "Incoming call remains active after swipe down")
+            plugin.declineCurrent()
 
+            // Swiping down during another plugin's critical activity must not overwrite it
+            let criticalOther = NotchActivityPayload(
+                id: "airdrop-critical",
+                pluginID: "com.island.plugin.airdrop",
+                priority: .critical,
+                posture: .expandedCard,
+                wingSizes: NotchWingSizes(leftWidth: 34, rightWidth: 34),
+                compactLeadingView: AnyView(EmptyView()),
+                compactTrailingView: AnyView(EmptyView()),
+                expandedView: AnyView(EmptyView())
+            )
+            coordinator.publishPersistentActivity(criticalOther)
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == false, "Swiping down during another plugin's critical activity does not open history")
+            check(coordinator.persistentActivity?.pluginID == "com.island.plugin.airdrop", "Critical activity from another plugin remains active")
+            coordinator.clearPersistentActivity(pluginID: "com.island.plugin.airdrop", forceCollapseHover: false)
+
+            // canReply returns false when no live banner exists for the notification/entry
+            let orphanNotification = IslandNotification(appName: "Slack", kind: .message, sender: "Lydia", body: "Hi", canReply: true)
+            check(plugin.canReply(to: orphanNotification, entryID: "non-existent") == false, "canReply returns false when no live banner is tracked")
+
+            // Stopping plugin mid-reply clears reply state and text input lock
+            let replyBeforeStop = RawBanner(
+                texts: ["Slack", "Lydia", "Stopping mid-reply"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [replyBeforeStop])
+            plugin.beginReply()
+            plugin.replyDraft = "Draft"
+            check(coordinator.isTextInputActive == true && plugin.isReplying == true, "Reply state active before stop()")
             plugin.stop()
+            check(plugin.isReplying == false && plugin.replyDraft.isEmpty && coordinator.isTextInputActive == false, "stop() clears active reply state and text input lock")
+
             print("  [PASS] testNotificationBridgePlugin")
         }
 
@@ -1132,6 +1181,29 @@ struct IslandTestsRunner {
                 UserDefaults.standard.removeObject(forKey: "island.gestures.swipeToSkip")
             }
             coordinator.handleHoverExited()
+
+            // Verify swipe routing when both NowPlayingPlugin and NotificationBridgePlugin are active
+            let notifPlugin = NotificationBridgePlugin()
+            notifPlugin.start(coordinator: coordinator)
+            notifPlugin.keepUntilDismissed = true
+            let savedBanner = RawBanner(
+                texts: ["Slack", "Lydia", "Saved for later"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            notifPlugin.handle(banners: [savedBanner])
+            coordinator.handleNotchClicked()
+            notifPlugin.handleExpandedSwipe(.up)
+            plugin.simulateTrack()
+            coordinator.swipeToSkipMediaEnabled = true
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.lastNavCommand == .nextTrack, "Left swipe routes to active NowPlayingPlugin")
+            check(notifPlugin.isBrowsingHistory == false, "Left swipe consumed by NowPlaying does not open notification history")
+            coordinator.handleExpandedSwipe(.down)
+            check(notifPlugin.isBrowsingHistory == true, "Down swipe falls through to NotificationBridgePlugin to open kept history")
+            notifPlugin.clearAllHistory()
+            notifPlugin.keepUntilDismissed = false
+            notifPlugin.stop()
 
             plugin.stop()
             check(coordinator.persistentActivity == nil, "Persistent activity should clear on stop")

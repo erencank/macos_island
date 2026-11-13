@@ -113,6 +113,9 @@ public final class NotchWindowController {
             .receive(on: RunLoop.main)
             .sink { [weak self] newPosture in
                 guard let self, let panel = self.panel else { return }
+                if newPosture != .expandedCard {
+                    self.resetScrollGestureState()
+                }
                 let shouldCaptureClicks = (newPosture == .expandedCard) || self.isFileDragNearNotch || self.coordinator.isTextInputActive
                 if panel.ignoresMouseEvents == shouldCaptureClicks {
                     panel.ignoresMouseEvents = !shouldCaptureClicks
@@ -199,22 +202,24 @@ public final class NotchWindowController {
         hoverPollTimer = nil
     }
 
+    private func resetScrollGestureState() {
+        scrollDeltaX = 0
+        scrollDeltaY = 0
+        didTriggerScrollGesture = false
+    }
+
     private func handleScrollWheelEvent(_ event: NSEvent) {
+        if event.phase == .ended || event.phase == .cancelled {
+            resetScrollGestureState()
+            return
+        }
+
         guard coordinator.posture == .expandedCard,
               event.window === panel,
               event.momentumPhase == [] else { return }
 
         if event.phase == .began {
-            scrollDeltaX = 0
-            scrollDeltaY = 0
-            didTriggerScrollGesture = false
-        }
-
-        if event.phase == .ended || event.phase == .cancelled {
-            scrollDeltaX = 0
-            scrollDeltaY = 0
-            didTriggerScrollGesture = false
-            return
+            resetScrollGestureState()
         }
 
         guard !didTriggerScrollGesture else { return }

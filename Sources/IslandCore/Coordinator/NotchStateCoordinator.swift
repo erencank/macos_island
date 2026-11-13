@@ -127,7 +127,7 @@ public final class NotchStateCoordinator: ObservableObject {
     /// Count of kept notifications available in the in-memory history drawer.
     @Published public var keptNotificationCount: Int = 0
     public var onOpenKeptNotifications: (() -> Void)?
-    private var expandedSwipeHandlers: [String: (NotchSwipeDirection) -> Void] = [:]
+    private var expandedSwipeHandlers: [String: (NotchSwipeDirection) -> Bool] = [:]
     private var hoverExitHandlers: [String: () -> Void] = [:]
 
     /// When true, an interactive text input (e.g. notification reply) is active in the expanded card.
@@ -400,7 +400,7 @@ public final class NotchStateCoordinator: ObservableObject {
         }
     }
 
-    public func registerExpandedSwipeHandler(for pluginID: String, handler: @escaping (NotchSwipeDirection) -> Void) {
+    public func registerExpandedSwipeHandler(for pluginID: String, handler: @escaping (NotchSwipeDirection) -> Bool) {
         expandedSwipeHandlers[pluginID] = handler
     }
 
@@ -418,8 +418,16 @@ public final class NotchStateCoordinator: ObservableObject {
 
     public func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
         guard posture == .expandedCard, !isTextInputActive else { return }
-        for handler in expandedSwipeHandlers.values {
-            handler(direction)
+        let activePluginID = persistentActivity?.pluginID
+        if let activePluginID, let activeHandler = expandedSwipeHandlers[activePluginID] {
+            if activeHandler(direction) {
+                return
+            }
+        }
+        for pluginID in expandedSwipeHandlers.keys.sorted() where pluginID != activePluginID {
+            if expandedSwipeHandlers[pluginID]?(direction) == true {
+                return
+            }
         }
     }
 

@@ -356,35 +356,41 @@ private struct ExpandedContentSwitcher<DefaultContent: View>: View {
         return "default"
     }
 
-    private var contentTransition: AnyTransition {
-        guard hasAppeared else { return .identity }
-        if activity?.pluginID == "com.island.plugin.notifications" {
-            return .asymmetric(
-                insertion: .move(edge: .top)
-                    .combined(with: .opacity)
-                    .combined(with: .scale(scale: 0.97, anchor: .top)),
-                removal: .move(edge: .top)
-                    .combined(with: .opacity)
-                    .combined(with: .scale(scale: 0.97, anchor: .top))
-            )
-        }
-        return .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
+    private var notificationTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .top)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.97, anchor: .top)),
+            removal: .move(edge: .top)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.97, anchor: .top))
+        )
+    }
+
+    private var defaultTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
     }
 
     var body: some View {
         ZStack {
-            if let expanded = activity?.expandedView {
+            if let activity, activity.pluginID == "com.island.plugin.notifications" {
+                activity.expandedView
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(hasAppeared ? notificationTransition : .identity)
+            } else if let expanded = activity?.expandedView {
                 expanded
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id(contentKey)
-                    .transition(contentTransition)
+                    .transition(hasAppeared ? defaultTransition : .identity)
             } else {
                 defaultContent()
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id(contentKey)
-                    .transition(contentTransition)
+                    .transition(hasAppeared ? defaultTransition : .identity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

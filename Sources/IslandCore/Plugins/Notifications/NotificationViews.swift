@@ -294,7 +294,9 @@ public struct NotificationExpandedCardView: View {
                         .foregroundColor(.white.opacity(0.6))
                 }
                 .buttonStyle(.plain)
-            } else if plugin.isBrowsingHistory {
+            }
+
+            if plugin.isBrowsingHistory {
                 Button {
                     plugin.closeHistory()
                 } label: {

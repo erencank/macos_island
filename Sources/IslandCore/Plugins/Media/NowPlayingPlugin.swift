@@ -414,6 +414,9 @@ public struct NowPlayingExpandedCardView: View {
         .onDisappear {
             pulseResetTask?.cancel()
             pulseResetTask = nil
+            nudgeOffsetX = 0
+            artworkPulseScale = 1.0
+            highlightedDirection = nil
             hasAppeared = false
         }
     }
@@ -694,7 +697,7 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             .store(in: &cancellables)
 
         coordinator.registerExpandedSwipeHandler(for: id) { [weak self] direction in
-            self?.handleExpandedSwipe(direction)
+            self?.handleExpandedSwipe(direction) ?? false
         }
 
         mediaService.start()
@@ -710,18 +713,20 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         coordinator?.clearPersistentActivity(pluginID: id)
     }
 
-    private func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
+    private func handleExpandedSwipe(_ direction: NotchSwipeDirection) -> Bool {
         guard isEnabled,
               let coordinator,
               coordinator.swipeToSkipMediaEnabled,
-              coordinator.persistentActivity?.pluginID == id else { return }
+              coordinator.persistentActivity?.pluginID == id else { return false }
         switch direction {
         case .left:
             mediaService.sendCommand(.nextTrack)
+            return true
         case .right:
             mediaService.sendCommand(.previousTrack)
+            return true
         case .up, .down:
-            break
+            return false
         }
     }
 
