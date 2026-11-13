@@ -320,15 +320,10 @@ public struct NotchCanvasView: View {
                     }
                 }
 
-                if let expanded = coordinator.persistentActivity?.expandedView {
-                    expanded
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    defaultExpandedContent()
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                ExpandedContentSwitcher(
+                    activity: coordinator.persistentActivity,
+                    defaultContent: defaultExpandedContent
+                )
             }
             .padding(.bottom, 22)
             .gesture(
@@ -344,6 +339,64 @@ public struct NotchCanvasView: View {
                     }
             )
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
+        }
+    }
+}
+
+private struct ExpandedContentSwitcher<DefaultContent: View>: View {
+    let activity: NotchActivityPayload?
+    let defaultContent: () -> DefaultContent
+
+    @State private var hasAppeared: Bool = false
+
+    private var contentKey: String {
+        if let activity {
+            return "plugin-\(activity.pluginID)"
+        }
+        return "default"
+    }
+
+    private var contentTransition: AnyTransition {
+        guard hasAppeared else { return .identity }
+        if activity?.pluginID == "com.island.plugin.notifications" {
+            return .asymmetric(
+                insertion: .move(edge: .top)
+                    .combined(with: .opacity)
+                    .combined(with: .scale(scale: 0.97, anchor: .top)),
+                removal: .move(edge: .top)
+                    .combined(with: .opacity)
+                    .combined(with: .scale(scale: 0.97, anchor: .top))
+            )
+        }
+        return .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
+    }
+
+    var body: some View {
+        ZStack {
+            if let expanded = activity?.expandedView {
+                expanded
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(contentTransition)
+            } else {
+                defaultContent()
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(contentTransition)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .animation(.spring(response: 0.30, dampingFraction: 0.84), value: contentKey)
+        .onAppear {
+            Task { @MainActor in
+                hasAppeared = true
+            }
+        }
+        .onDisappear {
+            hasAppeared = false
         }
     }
 }
