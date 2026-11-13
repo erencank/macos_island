@@ -27,6 +27,54 @@ public enum NotchTuningAxis: String, Equatable, Sendable {
     case exitMargin
 }
 
+public enum NotchSwipeDirection: Equatable, Sendable {
+    case up
+    case down
+    case left
+    case right
+}
+
+public struct NotchNotificationHistoryState: Equatable, Sendable {
+    public var totalCount: Int
+    public var selectedIndex: Int
+    public var isBrowsing: Bool
+    public var isReplying: Bool
+
+    public init(
+        totalCount: Int = 0,
+        selectedIndex: Int = 0,
+        isBrowsing: Bool = false,
+        isReplying: Bool = false
+    ) {
+        self.totalCount = totalCount
+        self.selectedIndex = selectedIndex
+        self.isBrowsing = isBrowsing
+        self.isReplying = isReplying
+    }
+}
+
+public struct NotchNotificationHistoryActions {
+    public let open: () -> Void
+    public let close: () -> Void
+    public let previous: () -> Void
+    public let next: () -> Void
+    public let clearAll: () -> Void
+
+    public init(
+        open: @escaping () -> Void,
+        close: @escaping () -> Void,
+        previous: @escaping () -> Void,
+        next: @escaping () -> Void,
+        clearAll: @escaping () -> Void
+    ) {
+        self.open = open
+        self.close = close
+        self.previous = previous
+        self.next = next
+        self.clearAll = clearAll
+    }
+}
+
 /// Content-fitted wing sizing for the left and right sides of the physical notch.
 public struct NotchWingSizes: Equatable, Sendable {
     public let leftWidth: CGFloat
@@ -116,6 +164,13 @@ public final class NotchStateCoordinator: ObservableObject {
 
     /// Active visual calibration mode shown in the notch when adjusting Tuning sliders in Settings
     @Published public private(set) var activeTuningAxis: NotchTuningAxis?
+
+    /// Count of kept notifications available in the in-memory history drawer.
+    @Published public var keptNotificationCount: Int = 0
+    @Published public var notificationHistoryState = NotchNotificationHistoryState()
+    public var notificationHistoryActions: NotchNotificationHistoryActions?
+    private var expandedSwipeHandlers: [String: (NotchSwipeDirection) -> Bool] = [:]
+    private var hoverExitHandlers: [String: () -> Void] = [:]
 
     /// When true, an interactive text input (e.g. notification reply) is active in the expanded card.
     /// Locks the card in `.expandedCard` posture and disables hover collapse until submitted, cancelled, or clicked outside.
@@ -369,6 +424,9 @@ public final class NotchStateCoordinator: ObservableObject {
         hoverExpandTask?.cancel()
         isHovering = false
         if isTextInputActive { return }
+        for handler in hoverExitHandlers.values {
+            handler()
+        }
         withAnimation(IslandSprings.collapse) {
             isPressTensionActive = false
             recalculatePosture()
@@ -381,6 +439,37 @@ public final class NotchStateCoordinator: ObservableObject {
         withAnimation(IslandSprings.expand) {
             isPressTensionActive = false
             posture = .expandedCard
+        }
+    }
+
+    public func registerExpandedSwipeHandler(for pluginID: String, handler: @escaping (NotchSwipeDirection) -> Bool) {
+        expandedSwipeHandlers[pluginID] = handler
+    }
+
+    public func unregisterExpandedSwipeHandler(for pluginID: String) {
+        expandedSwipeHandlers.removeValue(forKey: pluginID)
+    }
+
+    public func registerHoverExitHandler(for pluginID: String, handler: @escaping () -> Void) {
+        hoverExitHandlers[pluginID] = handler
+    }
+
+    public func unregisterHoverExitHandler(for pluginID: String) {
+        hoverExitHandlers.removeValue(forKey: pluginID)
+    }
+
+    public func handleExpandedSwipe(_ direction: NotchSwipeDirection) {
+        guard posture == .expandedCard, !isTextInputActive else { return }
+        let activePluginID = persistentActivity?.pluginID
+        if let activePluginID, let activeHandler = expandedSwipeHandlers[activePluginID] {
+            if activeHandler(direction) {
+                return
+            }
+        }
+        for pluginID in expandedSwipeHandlers.keys.sorted() where pluginID != activePluginID {
+            if expandedSwipeHandlers[pluginID]?(direction) == true {
+                return
+            }
         }
     }
 

@@ -50,6 +50,16 @@ public enum TrackChangeDirection: String, Sendable, Equatable {
     case backward
 }
 
+public struct TrackNavigationPulse: Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public let direction: TrackChangeDirection
+
+    public init(id: UUID = UUID(), direction: TrackChangeDirection) {
+        self.id = id
+        self.direction = direction
+    }
+}
+
 public struct TrackChangeEvent: Equatable, Sendable, Identifiable {
     public let id: UUID
     public let title: String

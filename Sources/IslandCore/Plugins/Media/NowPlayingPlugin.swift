@@ -208,6 +208,15 @@ public struct AlbumArtworkThumbnail: View {
     }
 }
 
+private func directionalTrackTransition(direction: TrackChangeDirection) -> AnyTransition {
+    .asymmetric(
+        insertion: .move(edge: direction == .forward ? .trailing : .leading)
+            .combined(with: .opacity),
+        removal: .move(edge: direction == .forward ? .leading : .trailing)
+            .combined(with: .opacity)
+    )
+}
+
 /// Full expanded Now Playing card matching your screenshot 5:
 /// - Top row: Rounded album cover on left, Track title & Artist in center-left, animated waveform on right
 /// - Middle row: Elapsed timestamp (`2:02`), interactive progress scrubber capsule, remaining timestamp (`-2:33`)
@@ -217,6 +226,13 @@ public struct NowPlayingExpandedCardView: View {
     public var themeStyle: NowPlayingThemeStyle
     public var auxiliaryAction: NowPlayingAuxiliaryAction
     public var waveformIntensity: WaveformIntensity
+
+    @State private var nudgeOffsetX: CGFloat = 0
+    @State private var artworkPulseScale: CGFloat = 1.0
+    @State private var highlightedDirection: TrackChangeDirection?
+    @State private var pulseResetTask: Task<Void, Never>?
+    @State private var hasAppeared: Bool = false
+    @State private var lastHandledPulseID: UUID?
 
     public init(
         mediaService: MediaRemoteStreamService,
@@ -238,31 +254,45 @@ public struct NowPlayingExpandedCardView: View {
             elapsedTime: 0,
             isPlaying: false
         )
+        let direction = mediaService.latestTrackChange?.direction ?? .forward
+        let trackKey = track.trackIdentity
 
         VStack(spacing: 14) {
             // Top Metadata Row
             HStack(alignment: .center, spacing: 14) {
-                AlbumArtworkThumbnail(
-                    image: track.artworkImage,
-                    accentColor: track.dominantColor,
-                    size: 52,
-                    cornerRadius: 12
-                )
-                .shadow(color: track.dominantColor.opacity(0.32), radius: 8, y: 3)
+                ZStack(alignment: .leading) {
+                    HStack(alignment: .center, spacing: 14) {
+                        AlbumArtworkThumbnail(
+                            image: track.artworkImage,
+                            accentColor: track.dominantColor,
+                            size: 52,
+                            cornerRadius: 12
+                        )
+                        .scaleEffect(artworkPulseScale)
+                        .shadow(color: track.dominantColor.opacity(0.32), radius: 8, y: 3)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title)
-                        .font(.system(size: 14.5, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(track.title)
+                                .font(.system(size: 14.5, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
 
-                    Text(track.artist)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(.white.opacity(0.56))
-                        .lineLimit(1)
+                            Text(track.artist)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(.white.opacity(0.56))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .id(trackKey)
+                    .transition(hasAppeared ? directionalTrackTransition(direction: direction) : .identity)
                 }
-
-                Spacer(minLength: 8)
+                .offset(x: nudgeOffsetX)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .clipped()
+                .padding(.horizontal, -4)
+                .padding(.vertical, -8)
 
                 AudioWaveformView(
                     isPlaying: track.isPlaying,
@@ -272,6 +302,7 @@ public struct NowPlayingExpandedCardView: View {
                 .id("expanded-waveform-\(waveformIntensity.rawValue)")
                 .padding(.trailing, 4)
             }
+            .animation(.spring(response: 0.34, dampingFraction: 0.80), value: trackKey)
 
             // Middle Interactive Progress Scrubber Row
             HStack(spacing: 10) {
@@ -330,7 +361,8 @@ public struct NowPlayingExpandedCardView: View {
                 MediaTransportIconButton(
                     symbolName: "backward.fill",
                     iconSize: 18.5,
-                    buttonSize: CGSize(width: 44, height: 36)
+                    buttonSize: CGSize(width: 44, height: 36),
+                    isExternallyHighlighted: highlightedDirection == .backward
                 ) {
                     mediaService.sendCommand(.previousTrack)
                 }
@@ -351,7 +383,8 @@ public struct NowPlayingExpandedCardView: View {
                 MediaTransportIconButton(
                     symbolName: "forward.fill",
                     iconSize: 18.5,
-                    buttonSize: CGSize(width: 44, height: 36)
+                    buttonSize: CGSize(width: 44, height: 36),
+                    isExternallyHighlighted: highlightedDirection == .forward
                 ) {
                     mediaService.sendCommand(.nextTrack)
                 }
@@ -367,6 +400,43 @@ public struct NowPlayingExpandedCardView: View {
             .padding(.horizontal, 6)
         }
         .padding(.top, 6)
+        .onAppear {
+            lastHandledPulseID = mediaService.latestNavigationPulse?.id
+            Task { @MainActor in
+                hasAppeared = true
+            }
+        }
+        .onReceive(mediaService.$latestNavigationPulse) { pulse in
+            guard hasAppeared, let pulse, pulse.id != lastHandledPulseID else { return }
+            lastHandledPulseID = pulse.id
+            triggerNavigationPulse(pulse)
+        }
+        .onDisappear {
+            pulseResetTask?.cancel()
+            pulseResetTask = nil
+            nudgeOffsetX = 0
+            artworkPulseScale = 1.0
+            highlightedDirection = nil
+            hasAppeared = false
+        }
+    }
+
+    private func triggerNavigationPulse(_ pulse: TrackNavigationPulse) {
+        pulseResetTask?.cancel()
+        withAnimation(.spring(response: 0.16, dampingFraction: 0.72)) {
+            nudgeOffsetX = pulse.direction == .forward ? -14 : 14
+            artworkPulseScale = 0.94
+            highlightedDirection = pulse.direction
+        }
+        pulseResetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 130_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                nudgeOffsetX = 0
+                artworkPulseScale = 1.0
+                highlightedDirection = nil
+            }
+        }
     }
 
     private func scrubberFillStyle(for accent: Color) -> AnyShapeStyle {
@@ -401,26 +471,29 @@ private struct MediaTransportIconButton: View {
     let buttonSize: CGSize
     var tint: Color = .white
     var prominentHover: Bool = false
+    var isExternallyHighlighted: Bool = false
     let action: () -> Void
 
     @State private var isHovered: Bool = false
     @State private var isPressed: Bool = false
 
     var body: some View {
+        let isHighlighted = isPressed || isExternallyHighlighted
         Button(action: action) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(isPressed ? 0.22 : (isHovered ? (prominentHover ? 0.16 : 0.12) : 0.0)))
+                    .fill(Color.white.opacity(isHighlighted ? 0.22 : (isHovered ? (prominentHover ? 0.16 : 0.12) : 0.0)))
 
                 Image(systemName: symbolName)
                     .font(.system(size: iconSize, weight: .bold))
-                    .foregroundColor(isHovered ? .white : tint)
+                    .foregroundColor((isHovered || isExternallyHighlighted) ? .white : tint)
                     .contentTransition(.symbolEffect(.replace))
             }
             .frame(width: buttonSize.width, height: buttonSize.height)
-            .scaleEffect(isPressed ? 0.90 : (isHovered ? 1.08 : 1.0))
+            .scaleEffect(isPressed ? 0.90 : ((isHovered || isExternallyHighlighted) ? 1.08 : 1.0))
             .animation(.spring(response: 0.20, dampingFraction: 0.72), value: isHovered)
             .animation(.spring(response: 0.14, dampingFraction: 0.75), value: isPressed)
+            .animation(.spring(response: 0.18, dampingFraction: 0.75), value: isExternallyHighlighted)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -479,14 +552,7 @@ public struct CompactNowPlayingLeadingView: View {
                         cornerRadius: 5
                     )
                     .id(trackKey)
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: direction == .forward ? .trailing : .leading)
-                                .combined(with: .opacity),
-                            removal: .move(edge: direction == .forward ? .leading : .trailing)
-                                .combined(with: .opacity)
-                        )
-                    )
+                    .transition(directionalTrackTransition(direction: direction))
                 }
             }
             .frame(width: 20, height: 20)
@@ -630,6 +696,10 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
             }
             .store(in: &cancellables)
 
+        coordinator.registerExpandedSwipeHandler(for: id) { [weak self] direction in
+            self?.handleExpandedSwipe(direction) ?? false
+        }
+
         mediaService.start()
     }
 
@@ -639,7 +709,25 @@ public final class NowPlayingPlugin: ObservableObject, NotchPlugin {
         isShowingTrackInfo = false
         mediaService.stop()
         cancellables.removeAll()
+        coordinator?.unregisterExpandedSwipeHandler(for: id)
         coordinator?.clearPersistentActivity(pluginID: id)
+    }
+
+    private func handleExpandedSwipe(_ direction: NotchSwipeDirection) -> Bool {
+        guard isEnabled,
+              let coordinator,
+              coordinator.swipeToSkipMediaEnabled,
+              coordinator.persistentActivity?.pluginID == id else { return false }
+        switch direction {
+        case .left:
+            mediaService.sendCommand(.nextTrack)
+            return true
+        case .right:
+            mediaService.sendCommand(.previousTrack)
+            return true
+        case .up, .down:
+            return false
+        }
     }
 
     private func handleTrackChange(_ change: TrackChangeEvent) {

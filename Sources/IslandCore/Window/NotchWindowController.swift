@@ -19,6 +19,10 @@ public final class NotchWindowController {
     private var isFileDragNearNotch: Bool = false
     private var lastCompletedDragChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private var isLiveDragSessionActive: Bool = false
+    private var scrollDeltaX: CGFloat = 0
+    private var scrollDeltaY: CGFloat = 0
+    private var didTriggerScrollGesture: Bool = false
+    private var lastDiscreteScrollAt: Date = .distantPast
 
     public init(
         coordinator: NotchStateCoordinator,
@@ -65,12 +69,12 @@ public final class NotchWindowController {
                 for: geo.notchFrame.size,
                 hasPhysicalNotch: geo.hasPhysicalNotch
             )
-            let earPadding: CGFloat = 11
+            let earPadding: CGFloat = self.coordinator.posture == .expandedCard ? 16 : 11
             let width = layout.totalWidth + (earPadding * 2)
             let height = layout.height
             let originX = ((NotchGeometry.canvasWidth - width) / 2.0) + layout.horizontalCenterOffset
-            let originY = NotchGeometry.canvasHeight - height
-            return CGRect(x: originX, y: originY, width: width, height: height)
+            // NotchHitTestHostingView is an NSHostingView (isFlipped == true), so y = 0 is the top edge.
+            return CGRect(x: originX, y: 0, width: width, height: height)
         }
 
         hostingView.onFileDragEntered = { [weak self] in
@@ -109,6 +113,9 @@ public final class NotchWindowController {
             .receive(on: RunLoop.main)
             .sink { [weak self] newPosture in
                 guard let self, let panel = self.panel else { return }
+                if newPosture != .expandedCard {
+                    self.resetScrollGestureState()
+                }
                 let shouldCaptureClicks = (newPosture == .expandedCard) || self.isFileDragNearNotch || self.coordinator.isTextInputActive
                 if panel.ignoresMouseEvents == shouldCaptureClicks {
                     panel.ignoresMouseEvents = !shouldCaptureClicks
@@ -162,10 +169,15 @@ public final class NotchWindowController {
         }
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel]
         ) { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.evaluateCursorLocation(eventType: event.type)
+                guard let self else { return }
+                if event.type == .scrollWheel {
+                    self.handleScrollWheelEvent(event)
+                } else {
+                    self.evaluateCursorLocation(eventType: event.type)
+                }
             }
             return event
         }
@@ -188,6 +200,58 @@ public final class NotchWindowController {
         }
         hoverPollTimer?.invalidate()
         hoverPollTimer = nil
+    }
+
+    private func resetScrollGestureState() {
+        scrollDeltaX = 0
+        scrollDeltaY = 0
+        didTriggerScrollGesture = false
+    }
+
+    private func handleScrollWheelEvent(_ event: NSEvent) {
+        if event.phase == .ended || event.phase == .cancelled {
+            resetScrollGestureState()
+            return
+        }
+
+        guard coordinator.posture == .expandedCard,
+              event.window === panel,
+              event.momentumPhase == [] else { return }
+
+        if event.phase == .began {
+            resetScrollGestureState()
+        }
+
+        guard !didTriggerScrollGesture else { return }
+
+        if event.phase == [] {
+            let now = Date()
+            guard now.timeIntervalSince(lastDiscreteScrollAt) >= 0.22 else { return }
+            let dy = event.scrollingDeltaY
+            let dx = event.scrollingDeltaX
+            guard abs(dy) >= 2 || abs(dx) >= 2 else { return }
+            lastDiscreteScrollAt = now
+            dispatchScrollSwipe(dx: dx, dy: dy, inverted: event.isDirectionInvertedFromDevice)
+            return
+        }
+
+        scrollDeltaX += event.scrollingDeltaX
+        scrollDeltaY += event.scrollingDeltaY
+
+        let threshold: CGFloat = 24
+        guard abs(scrollDeltaY) >= threshold || abs(scrollDeltaX) >= threshold else { return }
+        didTriggerScrollGesture = true
+        dispatchScrollSwipe(dx: scrollDeltaX, dy: scrollDeltaY, inverted: event.isDirectionInvertedFromDevice)
+    }
+
+    private func dispatchScrollSwipe(dx: CGFloat, dy: CGFloat, inverted: Bool) {
+        let physicalY = inverted ? dy : -dy
+        let physicalX = inverted ? dx : -dx
+        if abs(physicalY) >= abs(physicalX) {
+            coordinator.handleExpandedSwipe(physicalY > 0 ? .down : .up)
+        } else {
+            coordinator.handleExpandedSwipe(physicalX > 0 ? .right : .left)
+        }
     }
 
     private func setFileDragNearNotch(_ active: Bool) {
@@ -261,7 +325,7 @@ public final class NotchWindowController {
             hasPhysicalNotch: geo.hasPhysicalNotch
         )
 
-        let earPadding: CGFloat = 11
+        let earPadding: CGFloat = coordinator.posture == .expandedCard ? 16 : 11
         let activeWidth = layout.totalWidth + (earPadding * 2)
         let activeHeight = layout.height
 

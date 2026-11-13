@@ -669,6 +669,11 @@ public struct SettingsWindowView: View {
                         range: 2.0...10.0,
                         step: 0.5
                     )
+                    rowDivider
+                    settingsToggleRow(
+                        title: "Keep notifications until dismissed",
+                        isOn: $notificationPlugin.keepUntilDismissed
+                    )
                 }
             }
 

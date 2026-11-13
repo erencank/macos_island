@@ -285,22 +285,219 @@ public struct NotchCanvasView: View {
             }
 
         case .expandedCard:
-            VStack(spacing: 0) {
-                Spacer()
-                    .frame(height: hasPhysicalNotch ? max(baseNotchSize.height + 2, 36) : 14)
+            let historyState = coordinator.notificationHistoryState
+            let isViewingNotifications = coordinator.persistentActivity?.pluginID == "com.island.plugin.notifications"
+            let isCritical = coordinator.persistentActivity?.priority == .critical
+            let showKeptBadge = historyState.totalCount > 0 && !isViewingNotifications && !isCritical
+            let showHistoryPager = isViewingNotifications && !isCritical && !historyState.isReplying && historyState.totalCount > 1
+            let showHistoryClear = showHistoryPager
+            let showHistoryClose = isViewingNotifications && !isCritical && !historyState.isReplying && historyState.isBrowsing
+            let hasHeaderControls = showKeptBadge || showHistoryPager || showHistoryClear || showHistoryClose
+            let headerHeight: CGFloat = hasPhysicalNotch
+                ? max(baseNotchSize.height + 2, 36)
+                : (hasHeaderControls ? 28 : 14)
 
-                if let expanded = coordinator.persistentActivity?.expandedView {
-                    expanded
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    defaultExpandedContent()
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    HStack(spacing: 4) {
+                        if showHistoryPager {
+                            historyPagerPill(state: historyState)
+                        }
+                    }
+                    .padding(.leading, 6)
+                    .padding(.top, hasPhysicalNotch ? 2 : 4)
+                    .frame(width: hasPhysicalNotch ? layout.leftWingWidth : nil, alignment: .leading)
+
+                    Spacer(minLength: hasPhysicalNotch ? max(0, baseNotchSize.width) : 8)
+
+                    HStack(spacing: 5) {
+                        if showKeptBadge {
+                            keptNotificationsBadge(count: historyState.totalCount)
+                        } else {
+                            if showHistoryClear {
+                                historyClearButton
+                            }
+                            if showHistoryClose {
+                                historyCloseButton
+                            }
+                        }
+                    }
+                    .padding(.trailing, 6)
+                    .padding(.top, hasPhysicalNotch ? 2 : 4)
+                    .frame(width: hasPhysicalNotch ? layout.rightWingWidth : nil, alignment: .trailing)
                 }
+                .frame(height: headerHeight, alignment: .center)
+
+                ExpandedContentSwitcher(
+                    activity: coordinator.persistentActivity,
+                    defaultContent: defaultExpandedContent
+                )
             }
             .padding(.bottom, 22)
+            .gesture(
+                DragGesture(minimumDistance: 26)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if abs(dy) >= abs(dx) {
+                            coordinator.handleExpandedSwipe(dy > 0 ? .down : .up)
+                        } else {
+                            coordinator.handleExpandedSwipe(dx > 0 ? .right : .left)
+                        }
+                    }
+            )
             .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
+        }
+    }
+
+    @ViewBuilder
+    private func keptNotificationsBadge(count: Int) -> some View {
+        Button {
+            coordinator.notificationHistoryActions?.open()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: 10.5, weight: .bold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8.5, weight: .bold))
+            }
+            .foregroundColor(.white.opacity(0.85))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func historyPagerPill(state: NotchNotificationHistoryState) -> some View {
+        let canGoNewer = state.isBrowsing && state.selectedIndex > 0
+        let canGoOlder = state.selectedIndex + 1 < state.totalCount
+
+        HStack(spacing: 4) {
+            Button {
+                coordinator.notificationHistoryActions?.previous()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.white.opacity(canGoNewer ? 0.85 : 0.25))
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canGoNewer)
+
+            Text("\(state.selectedIndex + 1)/\(state.totalCount)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.8))
+
+            Button {
+                coordinator.notificationHistoryActions?.next()
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.white.opacity(canGoOlder ? 0.85 : 0.25))
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canGoOlder)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3.5)
+        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.14)))
+    }
+
+    private var historyClearButton: some View {
+        Button {
+            coordinator.notificationHistoryActions?.clearAll()
+        } label: {
+            Text("Clear")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white.opacity(0.75))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(Capsule(style: .continuous).fill(Color.white.opacity(0.10)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var historyCloseButton: some View {
+        Button {
+            coordinator.notificationHistoryActions?.close()
+        } label: {
+            Image(systemName: "chevron.up")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundColor(.white.opacity(0.85))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Capsule(style: .continuous).fill(Color.white.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+        .help("Close history")
+    }
+}
+
+private struct ExpandedContentSwitcher<DefaultContent: View>: View {
+    let activity: NotchActivityPayload?
+    let defaultContent: () -> DefaultContent
+
+    @State private var hasAppeared: Bool = false
+
+    private var contentKey: String {
+        if let activity {
+            return "plugin-\(activity.pluginID)"
+        }
+        return "default"
+    }
+
+    private var notificationTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .top)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.97, anchor: .top)),
+            removal: .move(edge: .top)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.97, anchor: .top))
+        )
+    }
+
+    private var defaultTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
+    }
+
+    var body: some View {
+        ZStack {
+            if let activity, activity.pluginID == "com.island.plugin.notifications" {
+                activity.expandedView
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(hasAppeared ? notificationTransition : .identity)
+            } else if let expanded = activity?.expandedView {
+                expanded
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(hasAppeared ? defaultTransition : .identity)
+            } else {
+                defaultContent()
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(contentKey)
+                    .transition(hasAppeared ? defaultTransition : .identity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .animation(.spring(response: 0.30, dampingFraction: 0.84), value: contentKey)
+        .onAppear {
+            Task { @MainActor in
+                hasAppeared = true
+            }
+        }
+        .onDisappear {
+            hasAppeared = false
         }
     }
 }

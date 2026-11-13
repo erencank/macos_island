@@ -18,6 +18,7 @@ public enum MediaPlaybackCommand: Int32 {
 public final class MediaRemoteStreamService: ObservableObject {
     @Published public private(set) var currentTrack: NowPlayingTrack?
     @Published public private(set) var latestTrackChange: TrackChangeEvent?
+    @Published public private(set) var latestNavigationPulse: TrackNavigationPulse?
 
     private var pollTimer: Timer?
     private var progressTickTimer: Timer?
@@ -27,7 +28,7 @@ public final class MediaRemoteStreamService: ObservableObject {
     private var isSimulatedTrackActive: Bool = false
     /// Prevents a poll during the first 1.2s after a user clicks Play/Pause from overwriting the optimistic toggle
     private var lastUserCommandTimestamp: Date = .distantPast
-    private var lastNavCommand: MediaPlaybackCommand?
+    public private(set) var lastNavCommand: MediaPlaybackCommand?
     private var lastNavCommandTimestamp: Date = .distantPast
 
     public init() {}
@@ -85,6 +86,9 @@ public final class MediaRemoteStreamService: ObservableObject {
         if command == .nextTrack || command == .previousTrack {
             lastNavCommand = command
             lastNavCommandTimestamp = Date()
+            latestNavigationPulse = TrackNavigationPulse(
+                direction: command == .previousTrack ? .backward : .forward
+            )
         }
 
         if isSimulatedTrackActive, var track = currentTrack {

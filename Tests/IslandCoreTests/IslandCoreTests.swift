@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import IOBluetooth
@@ -631,6 +632,19 @@ struct IslandTestsRunner {
             let parsedLocalizedSlack = parsers.parse(localizedExpandedSlack)
             check(parsedLocalizedSlack?.body == "Hallo!", "Expanded Slack body strips localized action chrome")
 
+            // Thread keys for conversation grouping
+            let slackDMThread = parsers.parse(RawBanner(texts: ["Slack, bol, Lydia van Dam, Hey", "bol", "Lydia van Dam", "Hey"]))
+            let slackChannelThread = parsers.parse(RawBanner(texts: ["Slack, bol, engineering, Bob: Build passed", "bol", "engineering", "Bob: Build passed"]))
+            let whatsAppDMThread = parsers.parse(RawBanner(texts: ["WhatsApp", "Alex", "Ping"]))
+            let whatsAppGroupNotif = parsers.parse(RawBanner(texts: ["WhatsApp", "Sam", "Weekend Plans", "Hi!"]))
+            let whatsAppCallNotif = parsers.parse(RawBanner(texts: ["WhatsApp", "Sam", "Incoming voice call"]))
+            check(slackDMThread?.threadKey == "slack|dm|lydia van dam", "Slack DM threadKey groups by sender")
+            check(slackChannelThread?.threadKey == "slack|channel|#engineering", "Slack channel threadKey groups by channel")
+            check(whatsAppDMThread?.threadKey == "whatsapp|dm|alex", "WhatsApp DM threadKey groups by sender")
+            check(whatsAppGroupNotif?.threadKey == "whatsapp|channel|weekend plans", "WhatsApp group threadKey groups by group channel")
+            check(whatsAppCallNotif?.threadKey == nil, "Incoming call has nil threadKey")
+            check(parsedOutlook?.threadKey == nil, "Outlook email has nil threadKey")
+
             print("  [PASS] testNotificationParsers")
         }
 
@@ -648,7 +662,8 @@ struct IslandTestsRunner {
                 "island.notifications.hideBanner.whatsapp",
                 "island.notifications.otherApps",
                 "island.notifications.messageDuration",
-                "island.notifications.maxWingWidth"
+                "island.notifications.maxWingWidth",
+                "island.notifications.keepUntilDismissed"
             ]
             for key in notificationDefaultsKeys {
                 UserDefaults.standard.removeObject(forKey: key)
@@ -828,7 +843,246 @@ struct IslandTestsRunner {
             check(coordinator.isTextInputActive == false, "submitReply resets isTextInputActive to false")
             check(coordinator.persistentActivity == nil, "submitReply dismisses current active notification")
 
+            // Test keepUntilDismissed history & swipe navigation
+            check(plugin.keepUntilDismissed == false, "keepUntilDismissed defaults to false")
+            plugin.keepUntilDismissed = true
+            check(UserDefaults.standard.bool(forKey: "island.notifications.keepUntilDismissed") == true, "keepUntilDismissed persists to UserDefaults")
+
+            var firstBannerAlive = true
+            let olderBanner = RawBanner(
+                texts: ["Slack", "Lydia", "Nice, ik ga er morgen even doorheen."],
+                canReply: true,
+                isBannerAlive: { firstBannerAlive }
+            )
+            let newerBanner = RawBanner(
+                texts: ["WhatsApp", "Sam", "Are we still on for 7?"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [olderBanner])
+            plugin.handle(banners: [newerBanner])
+            check(plugin.history.count == 2, "keepUntilDismissed retains both incoming notifications in history")
+            check(coordinator.keptNotificationCount == 2, "Coordinator reflects keptNotificationCount == 2")
+            check(coordinator.notificationHistoryState == NotchNotificationHistoryState(totalCount: 2, selectedIndex: 0, isBrowsing: false, isReplying: false), "Coordinator notificationHistoryState reflects non-browsing kept count")
+            check(plugin.history.first?.notification.appName == "WhatsApp", "Newest notification is at index 0")
+
+            // Simulate toast expiry (banner gone from screen)
+            firstBannerAlive = false
+            let olderEntry = plugin.history[1]
+            check(plugin.canReply(to: olderEntry.notification, entryID: olderEntry.id) == false, "Expired banner cannot inline-reply")
+            let newerEntry = plugin.history[0]
+            check(plugin.canReply(to: newerEntry.notification, entryID: newerEntry.id) == true, "Live banner can still inline-reply")
+
+            // Swipe down while viewing expanded card opens history
+            coordinator.clearPersistentActivity(pluginID: plugin.id, forceCollapseHover: false)
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == true, "Swiping down in expanded card opens kept notification history")
+            check(plugin.selectedHistoryIndex == 0, "History opens at newest notification (index 0)")
+
+            // Swiping left cycles to older notification; swiping down does not cycle further
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.selectedHistoryIndex == 0, "Swiping down while browsing history does not advance")
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Swiping left moves to older notification (index 1)")
+            check(coordinator.notificationHistoryState == NotchNotificationHistoryState(totalCount: 2, selectedIndex: 1, isBrowsing: true, isReplying: false), "Coordinator notificationHistoryState updates selectedIndex and isBrowsing")
+
+            // Reply lock blocks swipe navigation and updates notificationHistoryState.isReplying
+            plugin.beginReply()
+            check(coordinator.notificationHistoryState.isReplying == true, "Coordinator notificationHistoryState reflects active reply")
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.selectedHistoryIndex == 1, "Swiping is locked while typing a reply")
+            plugin.cancelReply()
+            check(coordinator.notificationHistoryState.isReplying == false, "Coordinator notificationHistoryState clears isReplying after cancelReply")
+
+            // Coordinator top-ear history actions mirror open/next/previous/close/clearAll
+            coordinator.notificationHistoryActions?.previous()
+            check(plugin.selectedHistoryIndex == 0, "notificationHistoryActions.previous moves to newer notification")
+            coordinator.notificationHistoryActions?.next()
+            check(plugin.selectedHistoryIndex == 1, "notificationHistoryActions.next moves to older notification")
+            coordinator.notificationHistoryActions?.close()
+            check(plugin.isBrowsingHistory == false && coordinator.notificationHistoryState.isBrowsing == false, "notificationHistoryActions.close closes history drawer")
+            coordinator.notificationHistoryActions?.open()
+            check(plugin.isBrowsingHistory == true && plugin.selectedHistoryIndex == 0, "notificationHistoryActions.open reopens history at index 0")
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Moved to index 1 via swipe")
+
+            // Swiping right returns to newer notification and stays at index 0
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.selectedHistoryIndex == 0, "Swiping right returns to newer notification (index 0)")
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.isBrowsingHistory == true && plugin.selectedHistoryIndex == 0, "Swiping right at index 0 stays in history")
+
+            // Swiping up from any index immediately closes history back to default card
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.selectedHistoryIndex == 1, "Moved back to index 1")
+            coordinator.handleExpandedSwipe(.up)
+            check(plugin.isBrowsingHistory == false, "Swiping up from index 1 immediately closes history drawer")
+            check(plugin.history.count == 2, "Closing history drawer preserves kept notifications")
+
+            // Moving cursor away (hover exit) closes history drawer and collapses posture (never trapped open)
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == true && coordinator.posture == .expandedCard, "History opened in expanded posture")
+            coordinator.handleHoverExited()
+            check(plugin.isBrowsingHistory == false, "Hover exit closes history drawer")
+            check(coordinator.posture == .resting, "Hover exit collapses expanded card to resting")
+            check(plugin.history.count == 2, "Hover exit preserves kept notifications")
+            coordinator.handleNotchClicked()
+
+            // Dismissing while browsing removes only the dismissed notification and advances
+            plugin.openHistory(at: 0)
+            plugin.dismissCurrent()
+            check(plugin.history.count == 1, "Dismissing removes only the dismissed notification")
+            check(plugin.history[0].notification.sender == "Lydia", "Remaining notification stays in history")
+            check(plugin.isBrowsingHistory == true, "Dismissing advances to remaining kept notification")
+
+            plugin.clearAllHistory()
+            check(plugin.history.isEmpty, "clearAllHistory empties kept notifications")
+            check(coordinator.keptNotificationCount == 0, "Coordinator badge count resets to 0")
+
+            // Test thread grouping across consecutive DMs and group messages
+            var waMsg1Sent: String?
+            var waMsg2Sent: String?
+            let waDM1 = RawBanner(
+                texts: ["WhatsApp", "Alexandre", "Boulderen?"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in waMsg1Sent = text; return true }
+            )
+            let slackGroup1 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Checking PR", "bol", "dev", "Lydia: Checking PR"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            let waDM2 = RawBanner(
+                texts: ["WhatsApp", "Alexandre", "18:30?"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in waMsg2Sent = text; return true }
+            )
+            let slackGroup2 = RawBanner(
+                texts: ["Slack, bol, dev, Bob: Looks good!", "bol", "dev", "Bob: Looks good!"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+
+            plugin.handle(banners: [waDM1])
+            plugin.handle(banners: [slackGroup1])
+            check(plugin.history.count == 2, "Two distinct conversations create 2 thread entries")
+            check(plugin.history[0].notification.channel == "#dev", "Newest conversation is Slack #dev at index 0")
+
+            // A second DM from Alexandre merges into the existing WhatsApp DM thread and moves it to top
+            plugin.handle(banners: [waDM2])
+            check(plugin.history.count == 2, "Second WhatsApp DM from same sender merges into existing thread")
+            check(plugin.history[0].notification.sender == "Alexandre", "Updated WhatsApp DM thread moves to index 0")
+            check(plugin.history[0].messages.map(\.body) == ["Boulderen?", "18:30?"], "Merged DM thread preserves chronological message bodies")
+
+            // A second message from a different sender in Slack #dev merges into the #dev thread
+            plugin.handle(banners: [slackGroup2])
+            check(plugin.history.count == 2, "Different sender in same Slack channel merges into #dev thread")
+            check(plugin.history[0].messages.map { "\($0.sender): \($0.body)" } == [
+                "Lydia: Checking PR",
+                "Bob: Looks good!"
+            ], "Merged channel thread preserves sender + body per message")
+
+            // Preserving active reply draft when a third message arrives in the same thread
+            plugin.beginReply()
+            plugin.replyDraft = "Omw!"
+            var slackMsg3Sent: String?
+            let slackGroup3 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Merging now", "bol", "dev", "Lydia: Merging now"],
+                canReply: true,
+                isBannerAlive: { true },
+                sendReply: { text in slackMsg3Sent = text; return true }
+            )
+            plugin.handle(banners: [slackGroup3])
+            check(plugin.isReplying == true, "Incoming message in active reply thread preserves isReplying")
+            check(plugin.replyDraft == "Omw!", "Incoming message in active reply thread preserves replyDraft")
+            check(plugin.history[0].messages.count == 3, "Third message appended to thread while replying")
+
+            plugin.submitReply()
+            check(slackMsg3Sent == "Omw!", "submitReply uses latest live banner in the grouped thread")
+            check(waMsg1Sent == nil && waMsg2Sent == nil, "Other threads' banners were not invoked")
+
+            // Cancel reply after preserveReply still allows hover exit to collapse posture
+            let slackGroup4 = RawBanner(
+                texts: ["Slack, bol, dev, Bob: Still checking?", "bol", "dev", "Bob: Still checking?"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            let slackGroup5 = RawBanner(
+                texts: ["Slack, bol, dev, Lydia: Yes, almost done", "bol", "dev", "Lydia: Yes, almost done"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [slackGroup4])
+            plugin.beginReply()
+            plugin.handle(banners: [slackGroup5])
+            plugin.cancelReply()
+            coordinator.handleHoverExited()
+            check(coordinator.posture == .compactWings, "After cancelReply, hover exit returns posture from expandedCard to compactWings")
+
+            // Disabling keepUntilDismissed clears history so collapsing active and re-enabling does not resurrect old items
+            plugin.keepUntilDismissed = false
+            check(plugin.history.isEmpty, "Disabling keepUntilDismissed clears kept history")
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.up)
+            plugin.keepUntilDismissed = true
+            check(plugin.history.isEmpty, "Re-enabling keepUntilDismissed after toast collapse does not resurrect cleared notifications")
+
+            // Swiping down while an incoming call is active must not overwrite the call with history
+            let keptMsg = RawBanner(
+                texts: ["Slack", "Lydia", "Kept message"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [keptMsg])
+            coordinator.handleNotchClicked()
+            coordinator.handleExpandedSwipe(.up)
+            let incomingCallBanner = RawBanner(
+                texts: ["WhatsApp", "Sam", "Incoming voice call"],
+                buttons: [BannerButton(title: "Accept", press: { true }), BannerButton(title: "Decline", press: { true })]
+            )
+            plugin.handle(banners: [incomingCallBanner])
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == false, "Swiping down during an incoming call does not open history")
+            check(coordinator.persistentActivity?.priority == .critical, "Incoming call remains active after swipe down")
+            plugin.declineCurrent()
+
+            // Swiping down during another plugin's critical activity must not overwrite it
+            let criticalOther = NotchActivityPayload(
+                id: "airdrop-critical",
+                pluginID: "com.island.plugin.airdrop",
+                priority: .critical,
+                posture: .expandedCard,
+                wingSizes: NotchWingSizes(leftWidth: 34, rightWidth: 34),
+                compactLeadingView: AnyView(EmptyView()),
+                compactTrailingView: AnyView(EmptyView()),
+                expandedView: AnyView(EmptyView())
+            )
+            coordinator.publishPersistentActivity(criticalOther)
+            coordinator.handleExpandedSwipe(.down)
+            check(plugin.isBrowsingHistory == false, "Swiping down during another plugin's critical activity does not open history")
+            check(coordinator.persistentActivity?.pluginID == "com.island.plugin.airdrop", "Critical activity from another plugin remains active")
+            coordinator.clearPersistentActivity(pluginID: "com.island.plugin.airdrop", forceCollapseHover: false)
+
+            // canReply returns false when no live banner exists for the notification/entry
+            let orphanNotification = IslandNotification(appName: "Slack", kind: .message, sender: "Lydia", body: "Hi", canReply: true)
+            check(plugin.canReply(to: orphanNotification, entryID: "non-existent") == false, "canReply returns false when no live banner is tracked")
+
+            // Stopping plugin mid-reply clears reply state and text input lock
+            let replyBeforeStop = RawBanner(
+                texts: ["Slack", "Lydia", "Stopping mid-reply"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            plugin.handle(banners: [replyBeforeStop])
+            plugin.beginReply()
+            plugin.replyDraft = "Draft"
+            check(coordinator.isTextInputActive == true && plugin.isReplying == true, "Reply state active before stop()")
             plugin.stop()
+            check(plugin.isReplying == false && plugin.replyDraft.isEmpty && coordinator.isTextInputActive == false, "stop() clears active reply state and text input lock")
+
             print("  [PASS] testNotificationBridgePlugin")
         }
 
@@ -915,9 +1169,224 @@ struct IslandTestsRunner {
             plugin.simulateTrack()
             check(coordinator.persistentActivity?.wingSizes.leftWidth == 34, "Left wing should stay standard 34 width when track info reveal is disabled")
 
+            // Expanded swipe gestures control Next / Previous track when swipeToSkipMediaEnabled is true
+            let previousSwipeToSkip = UserDefaults.standard.object(forKey: "island.gestures.swipeToSkip")
+            coordinator.handleNotchClicked()
+            coordinator.swipeToSkipMediaEnabled = true
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.lastNavCommand == .nextTrack, "Swiping left on expanded Now Playing sends nextTrack")
+            check(plugin.mediaService.latestNavigationPulse?.direction == .forward, "Swiping left emits forward navigation pulse")
+            coordinator.handleExpandedSwipe(.right)
+            check(plugin.mediaService.lastNavCommand == .previousTrack, "Swiping right on expanded Now Playing sends previousTrack")
+            check(plugin.mediaService.latestNavigationPulse?.direction == .backward, "Swiping right emits backward navigation pulse")
+
+            let expandedCard = NowPlayingExpandedCardView(
+                mediaService: plugin.mediaService,
+                themeStyle: plugin.themeStyle,
+                auxiliaryAction: plugin.auxiliaryAction,
+                waveformIntensity: plugin.waveformIntensity
+            )
+            _ = expandedCard.body
+
+            coordinator.swipeToSkipMediaEnabled = false
+            plugin.simulateTrack()
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.currentTrack?.elapsedTime == 122, "Swipe left does not skip track when swipeToSkipMediaEnabled is false")
+            if let previousSwipeToSkip {
+                UserDefaults.standard.set(previousSwipeToSkip, forKey: "island.gestures.swipeToSkip")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "island.gestures.swipeToSkip")
+            }
+            coordinator.handleHoverExited()
+
+            // Verify swipe routing when both NowPlayingPlugin and NotificationBridgePlugin are active
+            let notifPlugin = NotificationBridgePlugin()
+            notifPlugin.start(coordinator: coordinator)
+            notifPlugin.keepUntilDismissed = true
+            let savedBanner = RawBanner(
+                texts: ["Slack", "Lydia", "Saved for later"],
+                canReply: true,
+                isBannerAlive: { true }
+            )
+            notifPlugin.handle(banners: [savedBanner])
+            coordinator.handleNotchClicked()
+            notifPlugin.handleExpandedSwipe(.up)
+            plugin.simulateTrack()
+            coordinator.swipeToSkipMediaEnabled = true
+            coordinator.handleExpandedSwipe(.left)
+            check(plugin.mediaService.lastNavCommand == .nextTrack, "Left swipe routes to active NowPlayingPlugin")
+            check(notifPlugin.isBrowsingHistory == false, "Left swipe consumed by NowPlaying does not open notification history")
+            coordinator.handleExpandedSwipe(.down)
+            check(notifPlugin.isBrowsingHistory == true, "Down swipe falls through to NotificationBridgePlugin to open kept history")
+            notifPlugin.clearAllHistory()
+            notifPlugin.keepUntilDismissed = false
+            notifPlugin.stop()
+
             plugin.stop()
             check(coordinator.persistentActivity == nil, "Persistent activity should clear on stop")
             print("  [PASS] testNowPlayingTrackChangeAnimationAndSettings")
+        }
+
+        // Top-ear Notification History controls: hit-testing in flipped NSHostingView & click dispatch
+        do {
+            _ = NSApplication.shared
+            let monitor = ScreenGeometryMonitor()
+            let geo = monitor.activeGeometry
+
+            var openCount = 0
+            var prevCount = 0
+            var nextCount = 0
+            var clearCount = 0
+            var closeCount = 0
+
+            func configureActions(on coordinator: NotchStateCoordinator) {
+                coordinator.notificationHistoryActions = NotchNotificationHistoryActions(
+                    open: { openCount += 1 },
+                    close: { closeCount += 1 },
+                    previous: { prevCount += 1 },
+                    next: { nextCount += 1 },
+                    clearAll: { clearCount += 1 }
+                )
+            }
+
+            func presentPanel(
+                for coordinator: NotchStateCoordinator,
+                withProvider: Bool = true
+            ) -> (panel: NotchPanel, hosting: NotchHitTestHostingView<NotchCanvasView>) {
+                let canvas = NotchCanvasView(
+                    coordinator: coordinator,
+                    geometryMonitor: monitor,
+                    defaultExpandedContent: { AnyView(Text("Default")) }
+                )
+                let hosting = NotchHitTestHostingView(rootView: canvas)
+                hosting.frame = NSRect(x: 0, y: 0, width: NotchGeometry.canvasWidth, height: NotchGeometry.canvasHeight)
+
+                if withProvider {
+                    let layout = coordinator.targetLayout(for: geo.notchFrame.size, hasPhysicalNotch: geo.hasPhysicalNotch)
+                    let earPadding: CGFloat = coordinator.posture == .expandedCard ? 16 : 11
+                    let width = layout.totalWidth + (earPadding * 2)
+                    let height = layout.height
+                    let originX = ((NotchGeometry.canvasWidth - width) / 2.0) + layout.horizontalCenterOffset
+                    let hitRect = CGRect(x: originX, y: 0, width: width, height: height)
+                    hosting.activeHitRectProvider = { hitRect }
+                }
+
+                let panel = NotchPanel(contentRect: geo.canvasWindowFrame)
+                panel.contentView = hosting
+                panel.allowsKeyFocus = false
+                panel.ignoresMouseEvents = false
+                panel.orderFrontRegardless()
+                hosting.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                return (panel, hosting)
+            }
+
+            @discardableResult
+            func clickFlipped(_ flippedPt: NSPoint, in hosting: NotchHitTestHostingView<NotchCanvasView>, panel: NotchPanel) -> NSView? {
+                let superviewPt = hosting.convert(flippedPt, to: panel.contentView?.superview)
+                let hit = hosting.hitTest(superviewPt)
+                guard let down = NSEvent.mouseEvent(
+                    with: .leftMouseDown,
+                    location: superviewPt,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: 1,
+                    pressure: 1
+                ), let up = NSEvent.mouseEvent(
+                    with: .leftMouseUp,
+                    location: superviewPt,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime + 0.02,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: 2,
+                    clickCount: 1,
+                    pressure: 0
+                ) else {
+                    return hit
+                }
+                panel.sendEvent(down)
+                panel.sendEvent(up)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                return hit
+            }
+
+            // 1. Bell badge opens history from .expandedCard top-right ear
+            let badgeCoordinator = NotchStateCoordinator(hoverExpandDelayMs: 0)
+            configureActions(on: badgeCoordinator)
+            badgeCoordinator.notificationHistoryState = NotchNotificationHistoryState(
+                totalCount: 2,
+                selectedIndex: 0,
+                isBrowsing: false,
+                isReplying: false
+            )
+            badgeCoordinator.handleNotchClicked()
+
+            let (badgePanel, badgeHosting) = presentPanel(for: badgeCoordinator)
+            let badgeProxies = badgeHosting.subviews
+                .filter { String(describing: type(of: $0)).contains("KeyViewProxy") }
+                .map(\.frame)
+                .sorted { $0.minX < $1.minX }
+            check(badgeProxies.count == 1, "Expected 1 top-ear button proxy for keptNotificationsBadge, got \(badgeProxies.count)")
+            if let bellRect = badgeProxies.first {
+                check(bellRect.midY < 45, "Bell badge sits inside top ear band (flipped y=\(bellRect.midY))")
+                let hit = clickFlipped(NSPoint(x: bellRect.midX, y: bellRect.midY), in: badgeHosting, panel: badgePanel)
+                check(hit != nil, "hitTest must succeed on top-ear bell badge")
+            }
+            check(openCount == 1, "Clicking top-ear bell badge triggers open action")
+
+            // Fallback interactive rect (activeHitRectProvider == nil) must also cover top ear (y: 0..<38)
+            badgeHosting.activeHitRectProvider = nil
+            let fallbackTopSuperviewPt = badgeHosting.convert(NSPoint(x: NotchGeometry.canvasWidth / 2, y: 20), to: badgePanel.contentView?.superview)
+            let fallbackBottomSuperviewPt = badgeHosting.convert(NSPoint(x: NotchGeometry.canvasWidth / 2, y: NotchGeometry.canvasHeight - 20), to: badgePanel.contentView?.superview)
+            check(badgeHosting.hitTest(fallbackTopSuperviewPt) != nil, "Fallback hit rect covers top-ear y=20 in flipped hosting coordinates")
+            check(badgeHosting.hitTest(fallbackBottomSuperviewPt) == nil, "Fallback hit rect rejects bottom-edge y=canvasHeight-20")
+            badgePanel.orderOut(nil)
+
+            // 2. Pager (<, >), Clear, and Close buttons fire in top ears while browsing history
+            let historyCoordinator = NotchStateCoordinator(hoverExpandDelayMs: 0)
+            configureActions(on: historyCoordinator)
+            historyCoordinator.publishPersistentActivity(
+                NotchActivityPayload(
+                    id: "test-notif-hittest",
+                    pluginID: "com.island.plugin.notifications",
+                    priority: .high,
+                    posture: .compactWings,
+                    wingSizes: NotchWingSizes(leftWidth: 36, rightWidth: 80),
+                    compactLeadingView: AnyView(Text("L")),
+                    compactTrailingView: AnyView(Text("R")),
+                    expandedView: AnyView(Text("Notification Body"))
+                )
+            )
+            historyCoordinator.notificationHistoryState = NotchNotificationHistoryState(
+                totalCount: 3,
+                selectedIndex: 1,
+                isBrowsing: true,
+                isReplying: false
+            )
+            historyCoordinator.handleNotchClicked()
+
+            let (historyPanel, historyHosting) = presentPanel(for: historyCoordinator)
+            let historyProxies = historyHosting.subviews
+                .filter { String(describing: type(of: $0)).contains("KeyViewProxy") }
+                .map(\.frame)
+                .sorted { $0.minX < $1.minX }
+            check(historyProxies.count == 4, "Expected 4 top-ear button proxies (<, >, Clear, Close), got \(historyProxies.count)")
+            for (idx, rect) in historyProxies.enumerated() {
+                check(rect.midY < 45, "History top-ear button \(idx) sits inside top ear band (flipped y=\(rect.midY))")
+                let hit = clickFlipped(NSPoint(x: rect.midX, y: rect.midY), in: historyHosting, panel: historyPanel)
+                check(hit != nil, "hitTest must succeed on history top-ear button \(idx)")
+            }
+            historyPanel.orderOut(nil)
+
+            check(prevCount == 1, "Clicking '<' arrow triggers previous action")
+            check(nextCount == 1, "Clicking '>' arrow triggers next action")
+            check(clearCount == 1, "Clicking 'Clear' triggers clearAll action")
+            check(closeCount == 1, "Clicking close button triggers close action")
+            print("  [PASS] testTopEarHistoryButtonHitTestingAndClicks")
         }
 
         print("==> Test Results: \(passed) checks passed, \(failed) failed.")
